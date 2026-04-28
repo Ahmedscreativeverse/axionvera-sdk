@@ -31,13 +31,12 @@ export { FaucetClient } from './client/faucetClient';
 export type { StellarClientOptions } from './client/stellarClient';
 
 // Contracts
-export { VaultContract } from './contracts/VaultContract';
-export { Vault } from './contracts/Vault';
+export { Vault } from './contracts/vault';
 export { VaultABI } from './contracts/abis/VaultABI';
-export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/Vault';
+export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/vault';
 
 // Wallet
-export { LocalKeypairWalletConnector } from './wallet/localKeypairWalletConnector';
+export { LocalKeypairWalletConnector, MockWalletConnector } from './wallet/walletConnector';
 export { BrowserWalletConnector } from './wallet/browserWalletConnector';
 export type { WalletConnector } from './wallet/walletConnector';
 
@@ -50,6 +49,6 @@ export { getDefaultRpcUrl, getNetworkPassphrase, resolveNetworkConfig } from './
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 
 // Testing & MSW
-export * from './test/msw/setup';
-export * from './test/msw/handlers';
-export { server } from './test/msw/server';
+// export * from './test/msw/setup';
+// export * from './test/msw/handlers';
+// export { server } from './test/msw/server';

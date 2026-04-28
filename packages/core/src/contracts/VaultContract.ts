@@ -112,8 +112,23 @@ export class VaultContract {
   private readonly transactionSigner: TransactionSigner;
 
   /**
-   * Creates a new VaultContract instance.
-   * @param config - Configuration for the vault contract
+   * Creates a new VaultContract instance for interacting with the Axionvera Vault smart contract.
+   * @param config - Configuration including client, contract ID, and wallet connector
+   * @example
+   * ```typescript
+   * import { VaultContract, StellarClient, LocalKeypairWalletConnector } from "axionvera-sdk";
+   * import { Keypair } from "@stellar/stellar-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const keypair = Keypair.fromSecret("S...");
+   * const wallet = new LocalKeypairWalletConnector(keypair);
+   *
+   * const vault = new VaultContract({
+   *   client,
+   *   contractId: "C...",
+   *   wallet
+   * });
+   * ```
    */
   constructor(config: VaultConfig) {
     this.client = config.client;
@@ -126,10 +141,23 @@ export class VaultContract {
   }
 
   /**
-   * Deposits tokens into the vault.
-   * 
-   * @param params - Deposit parameters
-   * @returns The transaction result, or the transaction builder if txBuilder was provided
+   * Deposits tokens into the vault and receives vault shares in return.
+   * @param params - Deposit parameters including amount as bigint and optional source account
+   * @returns The transaction result, or the transaction builder if txBuilder was provided for composition
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * // Simple deposit
+   * const result = await vault.deposit({ amount: 1000n });
+   * console.log("Deposit successful:", result);
+   *
+   * // Deposit with specific source account
+   * const result2 = await vault.deposit({
+   *   amount: 5000n,
+   *   from: "GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V"
+   * });
+   * ```
    */
   async deposit(params: DepositParams): Promise<any> {
     const from = params.from ?? await this.wallet.getPublicKey();
@@ -166,10 +194,23 @@ export class VaultContract {
   }
 
   /**
-   * Withdraws tokens from the vault.
-   * 
-   * @param params - Withdraw parameters
-   * @returns The transaction result, or the transaction builder if txBuilder was provided
+   * Withdraws tokens from the vault by burning vault shares.
+   * @param params - Withdraw parameters including amount as bigint and optional destination account
+   * @returns The transaction result, or the transaction builder if txBuilder was provided for composition
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * // Simple withdrawal
+   * const result = await vault.withdraw({ amount: 1000n });
+   * console.log("Withdrawal successful:", result);
+   *
+   * // Withdraw to specific destination
+   * const result2 = await vault.withdraw({
+   *   amount: 5000n,
+   *   to: "GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V"
+   * });
+   * ```
    */
   async withdraw(params: WithdrawParams): Promise<any> {
     const to = params.to ?? await this.wallet.getPublicKey();
@@ -207,9 +248,23 @@ export class VaultContract {
   }
 
   /**
-   * Gets the vault balance for a specific account.
-   * @param account - The account to check (optional, defaults to wallet public key)
-   * @returns The vault balance
+   * Retrieves the vault balance for a specific account as a bigint.
+   * @param account - The account address to check (optional, defaults to wallet public key)
+   * @returns The vault balance as a bigint
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * // Get balance for connected wallet
+   * const balance = await vault.getBalance();
+   * console.log("Your vault shares:", balance);
+   *
+   * // Get balance for specific account
+   * const otherBalance = await vault.getBalance(
+   *   "GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V"
+   * );
+   * console.log("Other account shares:", otherBalance);
+   * ```
    */
   async getBalance(account?: string): Promise<bigint> {
     const targetAccount = account ?? await this.wallet.getPublicKey();
@@ -254,10 +309,17 @@ export class VaultContract {
   }
 
   /**
-   * Claims pending rewards for the caller.
-   * 
-   * @param params - Claim rewards parameters (optional)
+   * Claims pending rewards for the connected wallet.
+   * @param params - Optional claim rewards parameters including txBuilder for composition
    * @returns The transaction result, or the transaction builder if txBuilder was provided
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * // Simple claim rewards
+   * const result = await vault.claimRewards();
+   * console.log("Rewards claimed:", result);
+   * ```
    */
   async claimRewards(params?: ClaimRewardsParams): Promise<any> {
     const sourceAccount = await this.wallet.getPublicKey();
@@ -288,8 +350,18 @@ export class VaultContract {
   }
 
   /**
-   * Gets general vault information.
-   * @returns Vault information
+   * Retrieves general vault information including total assets, total supply, APY, and lock period.
+   * @returns Vault information object with metrics as bigints and numbers
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * const info = await vault.getVaultInfo();
+   * console.log("Total assets:", info.totalAssets);
+   * console.log("Total supply:", info.totalSupply);
+   * console.log("APY:", info.apy);
+   * console.log("Lock period (seconds):", info.lockPeriod);
+   * ```
    */
   async getVaultInfo(): Promise<VaultInfo> {
     const contractCall: ContractCallParams = {
@@ -330,8 +402,16 @@ export class VaultContract {
 
   /**
    * Estimates the gas fee for a deposit operation.
-   * @param amount - The deposit amount
-   * @returns Estimated fee in stroops
+   * @param amount - The deposit amount as a bigint
+   * @returns Estimated fee in stroops as a number
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * const fee = await vault.estimateDepositFee(1000n);
+   * console.log("Estimated deposit fee (stroops):", fee);
+   * console.log("Estimated fee (XLM):", fee / 10_000_000);
+   * ```
    */
   async estimateDepositFee(amount: bigint): Promise<number> {
     const contractCall: ContractCallParams = {
@@ -350,9 +430,17 @@ export class VaultContract {
   }
 
   /**
-   * Estimates the gas fee for a withdraw operation.
-   * @param amount - The withdraw amount
-   * @returns Estimated fee in stroops
+   * Estimates the gas fee for a withdrawal operation.
+   * @param amount - The withdrawal amount as a bigint
+   * @returns Estimated fee in stroops as a number
+   * @example
+   * ```typescript
+   * import { VaultContract } from "axionvera-sdk";
+   *
+   * const fee = await vault.estimateWithdrawFee(1000n);
+   * console.log("Estimated withdrawal fee (stroops):", fee);
+   * console.log("Estimated fee (XLM):", fee / 10_000_000);
+   * ```
    */
   async estimateWithdrawFee(amount: bigint): Promise<number> {
     const contractCall: ContractCallParams = {

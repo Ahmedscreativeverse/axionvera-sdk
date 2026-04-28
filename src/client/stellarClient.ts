@@ -15,6 +15,7 @@ import { normalizeRpcError, normalizeTransactionError, TimeoutError, InsecureNet
 import { WebSocketManager } from "./websocket/websocketManager";
 import { WebSocketConfig } from "./websocket/types";
 import { Logger } from "../utils/logger";
+import { WalletConnector } from "../wallet/walletConnector";
 
 /**
  * Checks if a URL points to a localhost address.
@@ -85,10 +86,38 @@ export class StellarClient {
   readonly webSocketManager?: WebSocketManager;
   /** Logger instance for debugging and monitoring. */
   readonly logger: Logger;
+  /** Cache time-to-live in milliseconds for account data. */
+  private readonly CACHE_TTL = 5000;
+  /** Account cache for offline support. */
+  private accountCache: Map<string, { account: Account; timestamp: number }>;
+  /** Optional wallet connector for transaction signing. */
+  private wallet?: WalletConnector;
 
   /**
-   * Creates a new StellarClient instance.
-   * @param options - Configuration options
+   * Creates a new StellarClient instance for interacting with Soroban RPC.
+   * @param options - Configuration options for the client
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * // Connect to testnet with default settings
+   * const client = new StellarClient({ network: "testnet" });
+   *
+   * // Connect to a custom RPC endpoint
+   * const customClient = new StellarClient({
+   *   rpcUrl: "https://your-custom-rpc.com",
+   *   networkPassphrase: "Public Global Stellar Network ; September 2015"
+   * });
+   *
+   * // Enable concurrency control for high-volume apps
+   * const highVolumeClient = new StellarClient({
+   *   network: "mainnet",
+   *   concurrencyConfig: {
+   *     maxConcurrentRequests: 10,
+   *     queueTimeout: 5000
+   *   }
+   * });
+   * ```
    */
    constructor(options?: StellarClientOptions) {
      const config = resolveNetworkConfig(options);
@@ -123,6 +152,7 @@ export class StellarClient {
     this.retryConfig = options?.retryConfig ?? {};
     this.httpClient = createHttpClientWithRetry(this.retryConfig);
     this.logger = options?.logger ?? new Logger();
+    this.accountCache = new Map();
 
     // Initialize WebSocket manager if configuration is provided
     if (options?.webSocketConfig) {
@@ -152,9 +182,16 @@ export class StellarClient {
   }
 
   /**
-   * Checks the health of the RPC server.
-   * Automatically retries on failure.
-   * @returns The health check response
+   * Checks the health of the RPC server with automatic retry on failure.
+   * @returns The health check response containing status information
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const health = await client.getHealth();
+   * console.log("RPC Status:", health.status);
+   * ```
    */
   async getHealth(): Promise<rpc.Api.GetHealthResponse> {
     try {
@@ -168,6 +205,19 @@ export class StellarClient {
     }
   }
 
+  /**
+   * Retrieves network information including the network passphrase and friendbot URL.
+   * @returns The network information response
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const network = await client.getNetwork();
+   * console.log("Network passphrase:", network.networkPassphrase);
+   * console.log("Friendbot URL:", network.friendbotUrl);
+   * ```
+   */
   async getNetwork(): Promise<rpc.Api.GetNetworkResponse> {
     try {
       return await retry(() => this.rpc.getNetwork(), this.retryConfig);
@@ -180,6 +230,19 @@ export class StellarClient {
     }
   }
 
+  /**
+   * Retrieves information about the latest ledger on the network.
+   * @returns The latest ledger response containing sequence, timestamp, and protocol version
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const ledger = await client.getLatestLedger();
+   * console.log("Latest sequence:", ledger.sequence);
+   * console.log("Timestamp:", new Date(ledger.closedAt * 1000).toISOString());
+   * ```
+   */
   async getLatestLedger(): Promise<rpc.Api.GetLatestLedgerResponse> {
     try {
       return await retry(() => this.rpc.getLatestLedger(), this.retryConfig);
@@ -193,20 +256,124 @@ export class StellarClient {
   }
 
   /**
-   * Retrieves an account's information from the network.
-   * Automatically retries on failure.
-   * @param publicKey - The account's public key
-   * @returns The account information
+   * Retrieves an account's information from the network with automatic retry on failure.
+   * @param publicKey - The account's public key (G-prefixed string)
+   * @returns The account information including sequence number and balances
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const account = await client.getAccount("GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V");
+   * console.log("Sequence:", account.sequenceNumber().toString());
+   * console.log("Balance:", account.balance());
+   * ```
    */
   async getAccount(publicKey: string): Promise<Account> {
     return retry(() => this.rpc.getAccount(publicKey), this.retryConfig);
   }
 
   /**
-   * Simulates a transaction without submitting it.
-   * This is useful for testing transaction validity and getting expected costs.
-   * @param tx - The transaction to simulate
-   * @returns The simulation result
+   * Retrieves an account's information with offline cache fallback.
+   * Tries to fetch from the network first, but falls back to cached data if the network is unavailable.
+   * The cache is valid for 5 seconds and sequence numbers are incremented for sequential offline builds.
+   * @param publicKey - The account's public key (G-prefixed string)
+   * @returns The account information including sequence number and balances
+   * @throws AxionveraError if both network fetch fails and no valid cache exists
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   *
+   * // First call fetches from network and caches the result
+   * const account1 = await client.getAccountWithCache("GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V");
+   * console.log("Sequence:", account1.sequenceNumber().toString());
+   *
+   * // If network fails within 5 seconds, returns cached account with incremented sequence
+   * const account2 = await client.getAccountWithCache("GD5JPQ7VKFOVRWPOEX74JYXHHFNTFZ2JE5WZ4K2MWTROVHMWHD7KUZ2V");
+   * console.log("Cached sequence:", account2.sequenceNumber().toString());
+   * ```
+   */
+  async getAccountWithCache(publicKey: string): Promise<Account> {
+    try {
+      // Try to fetch from network
+      const account = await this.getAccount(publicKey);
+      // Update cache on success
+      this.accountCache.set(publicKey, {
+        account,
+        timestamp: Date.now()
+      });
+      return account;
+    } catch (error) {
+      // Network failed, check cache
+      const cached = this.accountCache.get(publicKey);
+      if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
+        this.logger.debug(`Using cached account for ${publicKey}`);
+        // Increment sequence for sequential offline builds
+        const currentSequence = cached.account.sequenceNumber();
+        const newSequence = currentSequence + 1n;
+        // Create new account with incremented sequence
+        const cachedAccount = new Account(publicKey, newSequence.toString());
+        // Update cache with incremented sequence
+        this.accountCache.set(publicKey, {
+          account: cachedAccount,
+          timestamp: cached.timestamp
+        });
+        return cachedAccount;
+      }
+      // No valid cache, throw error
+      throw new AxionveraError(
+        `Failed to fetch account and no valid cache available for ${publicKey}`,
+        { originalError: error }
+      );
+    }
+  }
+
+  /**
+   * Clears the account cache, removing all cached account data.
+   * Useful for testing or when you need to force fresh data from the network.
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   *
+   * // Clear cache to force fresh network fetch
+   * client.clearAccountCache();
+   * console.log("Account cache cleared");
+   * ```
+   */
+  clearAccountCache(): void {
+    this.accountCache.clear();
+    this.logger.debug("Account cache cleared");
+  }
+
+  /**
+   * Simulates a transaction without submitting it to test validity and estimate costs.
+   * @param tx - The transaction to simulate (Transaction or FeeBumpTransaction)
+   * @returns The simulation result with resource costs and any diagnostic events
+   * @throws SimulationFailedError if the transaction would fail during execution
+   * @example
+   * ```typescript
+   * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
+   * import { Keypair } from "@stellar/stellar-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const keypair = Keypair.random();
+   * const account = await client.getAccount(keypair.publicKey());
+   *
+   * const tx = new TransactionBuilder(account, {
+   *   fee: "100",
+   *   networkPassphrase: client.networkPassphrase
+   * })
+   *   .setTimeout(30)
+   *   .build();
+   *
+   * const simulation = await client.simulateTransaction(tx);
+   * console.log("CPU instructions:", simulation.results[0].cpuInstructions);
+   * console.log("Memory bytes:", simulation.results[0].memoryBytes);
+   * ```
    */
   async simulateTransaction(
     tx: Transaction | FeeBumpTransaction
@@ -227,33 +394,70 @@ export class StellarClient {
   }
 
   /**
-   * Prepares a transaction by fetching the current ledger sequence
-   * and setting the correct min sequence age.
-   * @param tx - The transaction to prepare
-   * @returns The prepared transaction
+   * Prepares a transaction by fetching the current ledger sequence and setting the correct min sequence age.
+   * @param tx - The transaction to prepare (Transaction or FeeBumpTransaction)
+   * @returns The prepared transaction with updated sequence and fee information
+   * @example
+   * ```typescript
+   * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
+   * import { Keypair } from "@stellar/stellar-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const keypair = Keypair.random();
+   * const account = await client.getAccount(keypair.publicKey());
+   *
+   * const tx = new TransactionBuilder(account, {
+   *   fee: "100",
+   *   networkPassphrase: client.networkPassphrase
+   * })
+   *   .setTimeout(30)
+   *   .build();
+   *
+   * const preparedTx = await client.prepareTransaction(tx);
+   * console.log("Prepared sequence:", preparedTx.sequence);
+   * ```
    */
   async prepareTransaction(tx: Transaction | FeeBumpTransaction): Promise<Transaction> {
     return this.rpc.prepareTransaction(tx);
   }
 
   /**
-   * Submits a signed transaction to the network.
-   * @param tx - The signed transaction to submit
-   * @returns The submission result containing hash and status
+   * Submits a signed transaction to the network, optionally signing with a wallet connector if configured.
+   * @param tx - The signed transaction to submit (Transaction or FeeBumpTransaction)
+   * @returns The submission result containing the transaction hash and status
+   * @example
+   * ```typescript
+   * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
+   * import { Keypair } from "@stellar/stellar-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const keypair = Keypair.random();
+   * const account = await client.getAccount(keypair.publicKey());
+   *
+   * const tx = new TransactionBuilder(account, {
+   *   fee: "100",
+   *   networkPassphrase: client.networkPassphrase
+   * })
+   *   .setTimeout(30)
+   *   .build();
+   *
+   * tx.sign(keypair);
+   * const result = await client.sendTransaction(tx);
+   * console.log("Transaction hash:", result.hash);
+   * console.log("Status:", result.status);
+   * ```
    */
   async sendTransaction(tx: Transaction | FeeBumpTransaction): Promise<TransactionSendResult> {
     let finalTx: Transaction | FeeBumpTransaction = tx;
 
     try {
       // If a wallet is available, sign the transaction before submission
-      if ((this as any).wallet) {
-        const wallet = (this as any).wallet;
-
+      if (this.wallet) {
         // Convert transaction to XDR for wallet signing
         const txXdr = tx.toXDR();
 
         // Sign via wallet connector
-        const signedXdr = await wallet.signTransaction(
+        const signedXdr = await this.wallet.signTransaction(
           txXdr,
           this.networkPassphrase
         );
@@ -277,23 +481,45 @@ export class StellarClient {
 
 
   /**
-   * Retrieves the status of a submitted transaction.
-   * Automatically retries on failure.
-   * @param hash - The transaction hash
-   * @returns The transaction status response
+   * Retrieves the status of a submitted transaction with automatic retry on failure.
+   * @param hash - The transaction hash to query
+   * @returns The transaction status response containing current state and details
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const txStatus = await client.getTransaction("abc123...");
+   * console.log("Status:", txStatus.status);
+   * ```
    */
   async getTransaction(hash: string): Promise<unknown> {
     return retry(() => this.rpc.getTransaction(hash), this.retryConfig);
   }
 
   /**
-   * Polls for a transaction to be confirmed or rejected.
+   * Polls for a transaction to be confirmed or rejected, waiting until it reaches a final state.
    * @param hash - The transaction hash to wait for
-   * @param params - Polling parameters
+   * @param params - Optional polling parameters
    * @param params.timeoutMs - Maximum time to wait in milliseconds (default: 30000)
    * @param params.intervalMs - Time between polls in milliseconds (default: 1000)
-   * @returns The transaction result when it reaches a final state
-   * @throws TimeoutError if the transaction times out
+   * @returns The transaction result when it reaches a final state (SUCCESS or FAILED)
+   * @throws TimeoutError if the transaction does not reach a final state within the timeout
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   *
+   * // Submit a transaction and wait for confirmation
+   * const result = await client.sendTransaction(signedTx);
+   * const finalResult = await client.pollTransaction(result.hash, {
+   *   timeoutMs: 60000,  // Wait up to 60 seconds
+   *   intervalMs: 2000    // Poll every 2 seconds
+   * });
+   *
+   * console.log("Final status:", finalResult.status);
+   * ```
    */
   async pollTransaction(
     hash: string,
@@ -316,11 +542,28 @@ export class StellarClient {
   }
 
   /**
-   * Signs a transaction using a local Keypair.
-   * This is a convenience method for local signing without a wallet connector.
+   * Signs a transaction using a local Keypair for server-side or automated signing.
    * @param tx - The transaction to sign
-   * @param keypair - The keypair to sign with
+   * @param keypair - The Keypair to sign with
    * @returns The signed transaction
+   * @example
+   * ```typescript
+   * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
+   * import { Keypair } from "@stellar/stellar-sdk";
+   *
+   * const client = new StellarClient({ network: "testnet" });
+   * const keypair = Keypair.fromSecret("S...");
+   * const account = await client.getAccount(keypair.publicKey());
+   *
+   * const tx = new TransactionBuilder(account, {
+   *   fee: "100",
+   *   networkPassphrase: client.networkPassphrase
+   * })
+   *   .setTimeout(30)
+   *   .build();
+   *
+   * const signedTx = await client.signWithKeypair(tx, keypair);
+   * ```
    */
   async signWithKeypair(tx: Transaction, keypair: Keypair): Promise<Transaction> {
     tx.sign(keypair);
@@ -328,10 +571,22 @@ export class StellarClient {
   }
 
   /**
-   * Parses a base64-encoded transaction XDR string.
-   * @param transactionXdr - The base64-encoded transaction
-   * @param networkPassphrase - The network passphrase
+   * Parses a base64-encoded transaction XDR string into a Transaction or FeeBumpTransaction object.
+   * @param transactionXdr - The base64-encoded transaction XDR string
+   * @param networkPassphrase - The network passphrase for the transaction
    * @returns The parsed Transaction or FeeBumpTransaction
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const xdr = "AAAA..."; // Base64-encoded transaction XDR
+   * const tx = StellarClient.parseTransactionXdr(
+   *   xdr,
+   *   "Test SDF Network ; September 2015"
+   * );
+   *
+   * console.log("Source account:", tx.source);
+   * ```
    */
   static parseTransactionXdr(
     transactionXdr: string,
@@ -341,9 +596,19 @@ export class StellarClient {
   }
 
   /**
-   * Gets the default network passphrase for a given network.
-   * @param network - The network ("testnet" or "mainnet")
-   * @returns The corresponding network passphrase
+   * Gets the default network passphrase for a given Stellar network.
+   * @param network - The network identifier ("testnet" or "mainnet")
+   * @returns The corresponding network passphrase string
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const testnetPassphrase = StellarClient.getDefaultNetworkPassphrase("testnet");
+   * console.log(testnetPassphrase); // "Test SDF Network ; September 2015"
+   *
+   * const mainnetPassphrase = StellarClient.getDefaultNetworkPassphrase("mainnet");
+   * console.log(mainnetPassphrase); // "Public Global Stellar Network ; September 2015"
+   * ```
    */
   static getDefaultNetworkPassphrase(network: AxionveraNetwork): string {
     switch (network) {
@@ -357,7 +622,24 @@ export class StellarClient {
   }
 
   /**
-   * Get concurrency control statistics
+   * Gets concurrency control statistics if enabled, showing request queue metrics.
+   * @returns Concurrency statistics including enabled status, max concurrent requests, and queue timeout
+   * @example
+   * ```typescript
+   * import { StellarClient } from "axionvera-sdk";
+   *
+   * const client = new StellarClient({
+   *   network: "mainnet",
+   *   concurrencyConfig: {
+   *     maxConcurrentRequests: 10,
+   *     queueTimeout: 5000
+   *   }
+   * });
+   *
+   * const stats = client.getConcurrencyStats();
+   * console.log("Concurrency enabled:", stats.enabled);
+   * console.log("Max concurrent requests:", stats.maxConcurrentRequests);
+   * ```
    */
   getConcurrencyStats() {
     if (!this.concurrencyEnabled) {
