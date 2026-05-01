@@ -1,6 +1,7 @@
 import {
   Account,
   Address,
+  FeeBumpTransaction,
   Contract,
   Transaction,
   TransactionBuilder,
@@ -129,6 +130,16 @@ export type BuildBaseTransactionParams = {
 };
 
 /**
+ * Options for wrapping a signed transaction in a fee bump envelope.
+ */
+export type BumpTransactionFeeOptions = {
+  /** The public key of the account sponsoring the higher fee */
+  feeSource: string;
+  /** The network passphrase used to parse and rebuild the transaction */
+  networkPassphrase: string;
+};
+
+/**
  * Builds a base transaction that can be extended with additional operations.
  * This is useful for composing multiple contract calls into a single transaction.
  * 
@@ -164,4 +175,141 @@ export function buildBaseTransaction(
   builder.setTimeout(timeoutInSeconds);
 
   return builder;
+}
+
+/**
+ * Fluent builder for constructing Soroban contract call transactions.
+ *
+ * @example
+ * ```typescript
+ * const tx = new ContractCallBuilder()
+ *   .setContract("C...")
+ *   .setMethod("deposit")
+ *   .setArgs([1000n, recipientAddress])
+ *   .setFee(200_000)
+ *   .setTimeout(30)
+ *   .build(sourceAccount, networkPassphrase);
+ * ```
+ */
+export class ContractCallBuilder {
+  private _contractId?: string;
+  private _method?: string;
+  private _args: ContractCallArg[] = [];
+  private _fee?: number;
+  private _timeoutInSeconds?: number;
+
+  /** Sets the contract ID to call. */
+  setContract(contractId: string): this {
+    this._contractId = contractId;
+    return this;
+  }
+
+  /** Sets the contract method name. */
+  setMethod(method: string): this {
+    this._method = method;
+    return this;
+  }
+
+  /** Sets the arguments for the contract call. */
+  setArgs(args: ContractCallArg[]): this {
+    this._args = args;
+    return this;
+  }
+
+  /** Sets the transaction fee in stroops (default: 100_000). */
+  setFee(fee: number): this {
+    this._fee = fee;
+    return this;
+  }
+
+  /** Sets the transaction timeout in seconds (default: 60). */
+  setTimeout(timeoutInSeconds: number): this {
+    this._timeoutInSeconds = timeoutInSeconds;
+    return this;
+  }
+
+  /**
+   * Builds the transaction.
+   * @param sourceAccount - The source account for the transaction
+   * @param networkPassphrase - The network passphrase
+   * @returns The constructed Transaction
+   * @throws {Error} If contractId or method have not been set
+   */
+  build(sourceAccount: Account, networkPassphrase: string): Transaction {
+    if (!this._contractId) throw new Error("ContractCallBuilder: contractId is required");
+    if (!this._method) throw new Error("ContractCallBuilder: method is required");
+
+    return buildContractCallTransaction({
+      sourceAccount,
+      networkPassphrase,
+      contractId: this._contractId,
+      method: this._method,
+      args: this._args,
+      fee: this._fee,
+      timeoutInSeconds: this._timeoutInSeconds
+    });
+  }
+
+  /**
+   * Builds only the contract call operation (without wrapping in a transaction).
+   * Useful for composing multiple operations into a single transaction.
+   * @throws {Error} If contractId or method have not been set
+   */
+  buildOperation(): xdr.Operation {
+    if (!this._contractId) throw new Error("ContractCallBuilder: contractId is required");
+    if (!this._method) throw new Error("ContractCallBuilder: method is required");
+
+    return buildContractCallOperation({
+      contractId: this._contractId,
+      method: this._method,
+      args: this._args
+    });
+  }
+ * Wraps a signed transaction in an unsigned fee bump envelope.
+ *
+ * The returned XDR preserves the original user signature on the inner
+ * transaction. Only the outer fee bump envelope still needs to be signed
+ * by the sponsoring account before submission.
+ *
+ * @param signedXdr - The already-signed inner transaction XDR
+ * @param newBaseFee - The replacement base fee in stroops
+ * @param options - Fee bump configuration
+ * @returns The unsigned fee bump transaction XDR
+ */
+export function bumpTransactionFee(
+  signedXdr: string,
+  newBaseFee: number,
+  options: BumpTransactionFeeOptions
+): string {
+  if (!signedXdr) {
+    throw new Error("signedXdr is required");
+  }
+
+  if (!Number.isInteger(newBaseFee) || newBaseFee <= 0) {
+    throw new Error("newBaseFee must be a positive integer");
+  }
+
+  if (!options.feeSource) {
+    throw new Error("feeSource is required");
+  }
+
+  const innerTransaction = TransactionBuilder.fromXDR(
+    signedXdr,
+    options.networkPassphrase
+  );
+
+  if (innerTransaction instanceof FeeBumpTransaction) {
+    throw new Error("signedXdr must be a signed inner transaction, not an existing fee bump transaction");
+  }
+
+  if (innerTransaction.signatures.length === 0) {
+    throw new Error("signedXdr must include at least one signature before applying a fee bump");
+  }
+
+  return TransactionBuilder.buildFeeBumpTransaction(
+    options.feeSource,
+    newBaseFee.toString(),
+    innerTransaction,
+    options.networkPassphrase
+  ).toXDR();
 }
