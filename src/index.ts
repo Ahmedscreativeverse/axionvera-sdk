@@ -20,6 +20,7 @@ export {
     NetworkMismatchError,
     AxionveraRPCError,
     SimulationFailedError,
+    SlippageToleranceExceededError,
     WalletConnectionError,
     toAxionveraError,
     normalizeRpcError,
