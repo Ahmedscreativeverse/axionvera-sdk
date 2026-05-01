@@ -9,6 +9,7 @@ export {
     RpcError,
     ContractError,
     TimeoutError,
+    TransactionTimeoutError,
     InsufficientFundsError,
     InvalidSignatureError,
     SimulationError,
@@ -31,21 +32,21 @@ export { FaucetClient } from './client/faucetClient';
 export type { StellarClientOptions } from './client/stellarClient';
 
 // Contracts
-export { VaultContract } from './contracts/VaultContract';
-export { Vault } from './contracts/Vault';
+export { Vault } from './contracts/vault';
 export { VaultABI } from './contracts/abis/VaultABI';
-export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/Vault';
+export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/vault';
 
 // Wallet
-export { LocalKeypairWalletConnector } from './wallet/localKeypairWalletConnector';
+export { LocalKeypairWalletConnector, MockWalletConnector } from './wallet/walletConnector';
 export { BrowserWalletConnector } from './wallet/browserWalletConnector';
+export { MockWalletConnector } from './wallet/mockWalletConnector';
 export type { WalletConnector } from './wallet/walletConnector';
 
 // Utils
 export { ConcurrencyQueue, createConcurrencyControlledClient } from './utils/concurrencyQueue';
 export { retry, createHttpClientWithRetry } from './utils/httpInterceptor';
-export { buildContractCallOperation, buildContractCallTransaction, buildBaseTransaction, toScVal } from './utils/transactionBuilder';
-export type { BuildBaseTransactionParams } from './utils/transactionBuilder';
+export { buildContractCallOperation, buildContractCallTransaction, buildBaseTransaction, bumpTransactionFee, toScVal } from './utils/transactionBuilder';
+export type { BuildBaseTransactionParams, BumpTransactionFeeOptions } from './utils/transactionBuilder';
 export { getDefaultRpcUrl, getNetworkPassphrase, resolveNetworkConfig } from './utils/networkConfig';
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 
