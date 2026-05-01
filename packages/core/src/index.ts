@@ -32,6 +32,8 @@ export type {
 export { ContractEventEmitter } from './contracts/ContractEventEmitter';
 export { Vault } from './contracts/Vault';
 export { VaultABI } from './contracts/abis/VaultABI';
+export type { ContractConfig } from './contracts/BaseContract';
+export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/Vault';
 // Soroban-native VaultContract config and param shapes.
 export type {
   VaultConfig,
