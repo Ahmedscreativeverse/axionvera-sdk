@@ -32,6 +32,7 @@ export {
 // Client
 export { StellarClient, HYDRATION_STATE_VERSION } from './client/stellarClient';
 export { FaucetClient } from './client/faucetClient';
+export type { StellarClientOptions, GetContractEventsOptions, GetContractEventsResult, ContractEventResult } from './client/stellarClient';
 export type { StellarClientOptions } from './client/stellarClient';
 export type { LogLevel, CustomLogger } from './utils/logger';
 export type {
