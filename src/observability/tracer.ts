@@ -1,12 +1,6 @@
-﻿import { TraceSpan, TraceLevel } from './types';
+import { TraceSpan, TraceLevel } from './types';
 
-const TRACE_LEVEL_PRIORITY: Record<TraceLevel, number> = {
-  off: 0,
-  error: 1,
-  warn: 2,
-  info: 3,
-  debug: 4,
-};
+
 
 export class Tracer {
   private spans: Map<string, TraceSpan> = new Map();

@@ -1,7 +1,7 @@
-﻿import { Logger, LogLevel, CustomLogger } from '../utils/logger';
+import { Logger, CustomLogger } from '../utils/logger';
 import { Tracer } from './tracer';
 import { DiagnosticsManager } from '../diagnostics/diagnosticsManager';
-import { ObservabilityConfig, DEFAULT_OBSERVABILITY_CONFIG, DiagnosticsReport, TraceSpan, DiagnosticEvent } from './types';
+import { ObservabilityConfig, DEFAULT_OBSERVABILITY_CONFIG, DiagnosticsReport, TraceSpan } from './types';
 
 export class ObservabilityService {
   readonly logger: Logger;
