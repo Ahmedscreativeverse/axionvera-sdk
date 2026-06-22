@@ -55,9 +55,9 @@ export class MetricsCollector {
 
   private key(name: string, tags: Record<string, string>): string {
     const tagStr = Object.entries(tags)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => ${k}=)
+      .sort(([a], [b]) =&gt; a.localeCompare(b))
+      .map(([k, v]) =&gt; k + '=' + v)
       .join(',');
-    return tagStr ? ${name}[] : name;
+    return tagStr ? name + '[' + tagStr + ']' : name;
   }
 }

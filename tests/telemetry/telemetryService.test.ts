@@ -1,5 +1,5 @@
-﻿import { TelemetryService, TelemetryFlushHandler } from '../../src/telemetry/telemetryService';
-import { TelemetryEvent, MetricsSnapshot } from '../../src/telemetry/types';
+﻿import { TelemetryService } from '../../src/telemetry/telemetryService';
+import { TelemetryEvent } from '../../src/telemetry/types';
 
 describe('TelemetryService', () => {
   let telemetry: TelemetryService;
