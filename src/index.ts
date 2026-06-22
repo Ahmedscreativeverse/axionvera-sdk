@@ -82,14 +82,15 @@ export * from './test/msw/setup';
 export * from './test/msw/handlers';
 export { server } from './test/msw/server';
 
-// Deterministic mock network (for unit / integration tests)
-export { MockNetwork, MockRpcServer, ScenarioBuilder } from './testing';
+// Replay Framework
+export { InteractionRecorder, ReplayEngine, ReplayValidator } from './replay';
 export type {
-  MockNetworkOptions,
-  MockAccountEntry,
-  MockHealthStatus,
-  MockSimulationResult,
-  MockTransactionEntry,
-  MockEventEntry,
-  MockRpcServerSnapshot,
-} from './testing';
+  ContractHandlers,
+  RecordedInteraction,
+  RecordingMetadata,
+  ReplaySession,
+  ReplayResult,
+  ValidationResult,
+  ReplayValidationReport,
+  ReplayOptions,
+} from './replay';
