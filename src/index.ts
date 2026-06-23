@@ -150,3 +150,33 @@ export type {
   OfflineTransactionValidationResult,
   OfflineTransactionPackage,
 } from './transactions';
+
+// Contract Schema Validation Framework
+export { SchemaValidationError } from './errors/axionveraError';
+export type { SchemaValidationErrorOptions } from './errors/axionveraError';
+export {
+  ContractValidationEngine,
+  defaultValidationEngine,
+  validateAgainstSchema,
+  withSchemaValidation,
+  customRule,
+  positiveBigIntSchema,
+  nonNegativeBigIntSchema,
+  nonEmptyStringSchema,
+  stellarAccountIdSchema,
+  stellarContractIdSchema,
+  numberInRangeSchema,
+} from './validation';
+export type {
+  AnyValidationSchema,
+  ContractMethodSchema,
+  ValidationIssue,
+  ValidationKind,
+} from './types/validation';
+export {
+  VAULT_CONTRACT_ID,
+  VaultDepositParamsSchema,
+  VaultWithdrawParamsSchema,
+  VaultInfoResultSchema,
+  VaultBalanceResultSchema,
+} from './contracts/contractSchemas';
