@@ -78,6 +78,18 @@ export type {
   SerializableValue,
 } from './client/stellarClient';
 
+// Registry
+export { ContractMetadataRegistry, contractMetadataRegistry } from './registry';
+export type {
+  ContractCapability,
+  ContractDeploymentMetadata,
+  ContractEnvironment,
+  ContractFeature,
+  ContractLookupOptions,
+  ContractMetadata,
+  ContractValidationResult,
+} from './registry';
+
 // Contracts
 // export { VaultContract } from './contracts/VaultContract';
 export { Vault } from './contracts/vault';
