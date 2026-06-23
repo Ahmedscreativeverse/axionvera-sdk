@@ -49,6 +49,19 @@ export type { BuildBaseTransactionParams } from './utils/transactionBuilder';
 export { getDefaultRpcUrl, getNetworkPassphrase, resolveNetworkConfig } from './utils/networkConfig';
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 
+// Monitoring
+export { RpcHealthMonitor } from './monitoring';
+export type {
+    EndpointHealthState,
+    RpcEndpointConfig,
+    RpcEndpointMetrics,
+    RpcEndpointStatus,
+    RpcHealthCheckClient,
+    RpcHealthMonitorConfig,
+    RpcHealthResponse,
+    RpcHealthStatusReport
+} from './monitoring';
+
 // Testing & MSW
 export * from './test/msw/setup';
 export * from './test/msw/handlers';

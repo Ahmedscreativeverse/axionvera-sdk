@@ -15,6 +15,12 @@ import { normalizeRpcError, normalizeTransactionError, TimeoutError, InsecureNet
 import { WebSocketManager } from "./websocket/websocketManager";
 import { WebSocketConfig } from "./websocket/types";
 import { Logger } from "../utils/logger";
+import {
+  RpcEndpointStatus,
+  RpcHealthMonitor,
+  RpcHealthMonitorConfig,
+  RpcHealthStatusReport
+} from "../monitoring";
 
 /**
  * Checks if a URL points to a localhost address.
@@ -40,6 +46,9 @@ export type StellarClientOptions = {
   concurrencyConfig?: Partial<ConcurrencyConfig>;
   retryConfig?: Partial<RetryConfig>;
   webSocketConfig?: WebSocketConfig;
+  monitoringConfig?: Partial<Omit<RpcHealthMonitorConfig, "endpoints">> & {
+    enabled?: boolean;
+  };
   logger?: Logger;
   allowHttp?: boolean;
 };
@@ -85,6 +94,8 @@ export class StellarClient {
   readonly webSocketManager?: WebSocketManager;
   /** Logger instance for debugging and monitoring. */
   readonly logger: Logger;
+  /** Optional RPC endpoint health monitor. */
+  readonly healthMonitor?: RpcHealthMonitor;
 
   /**
    * Creates a new StellarClient instance.
@@ -149,6 +160,25 @@ export class StellarClient {
         this.rpc = baseRpc;
       }
     }
+
+    if (options?.monitoringConfig?.enabled) {
+      this.healthMonitor = new RpcHealthMonitor({
+        intervalMs: options.monitoringConfig.intervalMs,
+        timeoutMs: options.monitoringConfig.timeoutMs,
+        degradedLatencyMs: options.monitoringConfig.degradedLatencyMs,
+        unhealthyAfterFailures: options.monitoringConfig.unhealthyAfterFailures,
+        autoStart: options.monitoringConfig.autoStart,
+        endpoints: [
+          {
+            id: `${this.network}:${this.rpcUrl}`,
+            url: this.rpcUrl,
+            network: this.network,
+            rpcClient: this.rpc,
+            allowHttp
+          }
+        ]
+      });
+    }
   }
 
   /**
@@ -166,6 +196,45 @@ export class StellarClient {
         { originalError: error }
       );
     }
+  }
+
+  /**
+   * Runs a health check for this client's configured RPC endpoint.
+   * Monitoring must be enabled with monitoringConfig.enabled.
+   */
+  async runEndpointHealthCheck(): Promise<RpcEndpointStatus> {
+    if (!this.healthMonitor) {
+      throw new AxionveraError('RPC health monitoring is not enabled for this client');
+    }
+
+    const [status] = await this.healthMonitor.runHealthChecks();
+    return status;
+  }
+
+  /**
+   * Returns the latest known health status for this client's RPC endpoint.
+   */
+  getEndpointHealthStatus(): RpcEndpointStatus | undefined {
+    return this.healthMonitor?.getEndpointStatus(`${this.network}:${this.rpcUrl}`);
+  }
+
+  /**
+   * Returns a full health report for this client's monitored RPC endpoint.
+   */
+  getHealthStatusReport(): RpcHealthStatusReport | undefined {
+    return this.healthMonitor?.getHealthReport();
+  }
+
+  startHealthMonitoring(): void {
+    if (!this.healthMonitor) {
+      throw new AxionveraError('RPC health monitoring is not enabled for this client');
+    }
+
+    this.healthMonitor.start();
+  }
+
+  stopHealthMonitoring(): void {
+    this.healthMonitor?.stop();
   }
 
   async getNetwork(): Promise<rpc.Api.GetNetworkResponse> {

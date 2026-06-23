@@ -1,10 +1,16 @@
 import { CloudWatchConfig, LogEntry } from './types';
 
 interface CloudWatchLogsClient {
-  createLogGroup(params: any): Promise<any>;
-  createLogStream(params: any): Promise<any>;
-  putLogEvents(params: any): Promise<any>;
+  send(command: unknown): Promise<any>;
 }
+
+type ResolvedCloudWatchConfig = CloudWatchConfig & {
+  logStreamName: string;
+  region: string;
+  batchSize: number;
+  flushIntervalMs: number;
+  maxRetries: number;
+};
 
 export class CloudWatchLogger {
   private client: CloudWatchLogsClient | null = null;
@@ -14,7 +20,7 @@ export class CloudWatchLogger {
   private isInitialized = false;
   private isDestroyed = false;
 
-  private readonly config: Required<CloudWatchConfig>;
+  private readonly config: ResolvedCloudWatchConfig;
 
   constructor(config: CloudWatchConfig) {
     this.config = {
@@ -134,9 +140,10 @@ export class CloudWatchLogger {
 
   private async ensureLogGroup(): Promise<void> {
     try {
-      await this.client!.createLogGroup({
+      const { CreateLogGroupCommand } = await import('@aws-sdk/client-cloudwatch-logs');
+      await this.client!.send(new CreateLogGroupCommand({
         logGroupName: this.config.logGroupName,
-      });
+      }));
     } catch (error: any) {
       // Log group already exists
       if (error.name !== 'ResourceAlreadyExistsException') {
@@ -147,10 +154,11 @@ export class CloudWatchLogger {
 
   private async ensureLogStream(): Promise<void> {
     try {
-      await this.client!.createLogStream({
+      const { CreateLogStreamCommand } = await import('@aws-sdk/client-cloudwatch-logs');
+      await this.client!.send(new CreateLogStreamCommand({
         logGroupName: this.config.logGroupName,
         logStreamName: this.config.logStreamName,
-      });
+      }));
     } catch (error: any) {
       // Log stream already exists
       if (error.name !== 'ResourceAlreadyExistsException') {
@@ -161,7 +169,8 @@ export class CloudWatchLogger {
 
   private async putLogEventsWithRetry(params: any, attempt = 1): Promise<any> {
     try {
-      return await this.client!.putLogEvents(params);
+      const { PutLogEventsCommand } = await import('@aws-sdk/client-cloudwatch-logs');
+      return await this.client!.send(new PutLogEventsCommand(params));
     } catch (error: any) {
       if (attempt >= this.config.maxRetries) {
         throw error;
@@ -176,7 +185,9 @@ export class CloudWatchLogger {
         });
         
         const response = await this.client!.send(command);
-        const stream = response.logStreams?.find(s => s.logStreamName === this.config.logStreamName);
+        const stream = response.logStreams?.find(
+          (s: { logStreamName?: string }) => s.logStreamName === this.config.logStreamName
+        );
         
         if (stream?.uploadSequenceToken) {
           params.sequenceToken = stream.uploadSequenceToken;

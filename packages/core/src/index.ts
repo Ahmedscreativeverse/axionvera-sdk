@@ -26,6 +26,19 @@ export { getDefaultRpcUrl, getNetworkPassphrase, resolveNetworkConfig } from './
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 export { decodeXdrBase64, clearXdrCache, getXdrCacheSize } from './utils/xdrCache';
 
+// Monitoring
+export { RpcHealthMonitor } from './monitoring';
+export type {
+  EndpointHealthState,
+  RpcEndpointConfig,
+  RpcEndpointMetrics,
+  RpcEndpointStatus,
+  RpcHealthCheckClient,
+  RpcHealthMonitorConfig,
+  RpcHealthResponse,
+  RpcHealthStatusReport
+} from './monitoring';
+
 // Errors
 export { 
   AxionveraError, 

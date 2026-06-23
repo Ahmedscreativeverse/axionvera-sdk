@@ -42,6 +42,16 @@
         "default": "./dist/client.js"
       }
     },
+    "./monitoring": {
+      "import": {
+        "types": "./dist/monitoring.d.mts",
+        "default": "./dist/monitoring.mjs"
+      },
+      "require": {
+        "types": "./dist/monitoring.d.ts",
+        "default": "./dist/monitoring.js"
+      }
+    },
     "./utils": {
       "import": {
         "types": "./dist/utils.d.mts",
