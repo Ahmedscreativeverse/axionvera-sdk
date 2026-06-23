@@ -212,6 +212,12 @@ export class ContractCallBuilder {
     return this;
   }
 
+  /** Appends a single argument to the existing arguments list. */
+  addArg(arg: ContractCallArg): this {
+    this._args.push(arg);
+    return this;
+  }
+
   /** Sets the transaction fee in stroops (default: 100_000). */
   setFee(fee: number): this {
     this._fee = fee;
@@ -261,7 +267,8 @@ export class ContractCallBuilder {
       args: this._args,
     });
   }
-  /* Wraps a signed transaction in an unsigned fee bump envelope.
+  /**
+   * Wraps a signed transaction in an unsigned fee bump envelope.
    *
    * The returned XDR preserves the original user signature on the inner
    * transaction. Only the outer fee bump envelope still needs to be signed
