@@ -33,6 +33,7 @@ import { Logger } from "../utils/logger";
 import { WalletConnector } from "../wallet/walletConnector";
 import { ServiceContainer, createServiceContainer } from "../core/serviceContainer";
 import { ServiceOverrides } from "../core/serviceInterfaces";
+import { telemetryService, metricsCollector } from "../telemetry";
 
 const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.15;
 
@@ -412,10 +413,18 @@ this.accountCache = new Map();
    * ```
    */
   async getHealth(): Promise<ValidatedGetHealthResponse> {
+    const start = Date.now();
+    metricsCollector.increment('requests.total', { operation: 'getHealth', network: this.network });
     try {
       const response = await this.executeWithMiddleware('request', 'getHealth', undefined, () => retry(() => this.rpc.getHealth(), this.retryConfig));
-      return validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
+      const validated = validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
+      metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'success' });
+      telemetryService.track('request_success', { operation: 'getHealth', network: this.network, duration: Date.now() - start });
+      return validated;
     } catch (error) {
+      metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'error' });
+      metricsCollector.increment('requests.errors', { operation: 'getHealth', network: this.network });
+      telemetryService.track('request_error', { operation: 'getHealth', network: this.network, error: error instanceof Error ? error.message : String(error) });
       if (error instanceof AxionveraError) throw error;
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getHealth',
@@ -860,14 +869,21 @@ this.accountCache = new Map();
   async simulateTransaction(
     tx: Transaction | FeeBumpTransaction
   ): Promise<rpc.Api.SimulateTransactionResponse> {
+    const start = Date.now();
+    metricsCollector.increment('transactions.simulate', { network: this.network });
     try {
       const result = await this.executeWithMiddleware('transaction', 'simulateTransaction', { tx }, ({ tx }) => this.rpc.simulateTransaction(tx));
       validateRpcResponse(SimulateTransactionResponseSchema, result, 'simulateTransaction');
       if (rpc.Api.isSimulationError(result)) {
         throw new SimulationFailedError(result.error, { simulationResult: result });
       }
+      metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'success' });
+      telemetryService.track('transaction_simulate_success', { network: this.network, duration: Date.now() - start });
       return result;
     } catch (error) {
+      metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'error' });
+      metricsCollector.increment('transactions.simulate_errors', { network: this.network });
+      telemetryService.track('transaction_simulate_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
       if (error instanceof AxionveraError) throw error;
       throw new SimulationFailedError(
         error instanceof Error ? error.message : 'Transaction simulation failed',
@@ -1061,7 +1077,8 @@ this.accountCache = new Map();
    */
   async sendTransaction(tx: Transaction | FeeBumpTransaction): Promise<TransactionSendResult> {
     let finalTx: Transaction | FeeBumpTransaction = tx;
-
+    const start = Date.now();
+    metricsCollector.increment('transactions.send', { network: this.network });
     try {
       // If a wallet is available, sign the transaction before submission
       if (this.wallet) {
@@ -1099,8 +1116,13 @@ this.accountCache = new Map();
       const result = await this.executeWithMiddleware('transaction', 'sendTransaction', { tx: finalTx }, ({ tx }) => this.rpc.sendTransaction(tx));
       const hash = (result as any).hash ?? (result as any).id ?? "";
       const status = (result as any).status ?? (result as any).statusText ?? "unknown";
+      metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'success' });
+      telemetryService.track('transaction_send_success', { network: this.network, duration: Date.now() - start, hash, status });
       return { hash, status, raw: result };
     } catch (error) {
+      metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'error' });
+      metricsCollector.increment('transactions.send_errors', { network: this.network });
+      telemetryService.track('transaction_send_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
       throw normalizeTransactionError(error);
     }
   }
