@@ -31,6 +31,7 @@ import { WebSocketManager } from "./websocket/websocketManager";
 import { WebSocketConfig } from "./websocket/types";
 import { Logger } from "../utils/logger";
 import { WalletConnector } from "../wallet/walletConnector";
+import { Middleware, MiddlewarePipeline, MiddlewareRegistration } from "../middleware";
 
 const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.15;
 
@@ -59,6 +60,8 @@ export type StellarClientOptions = {
   retryConfig?: Partial<RetryConfig>;
   webSocketConfig?: WebSocketConfig;
   logger?: Logger;
+  /** Middleware executed around SDK request and transaction workflows. */
+  middleware?: Middleware[];
   /** Multiplier applied to simulated Soroban resources and fees (default: 1.15). */
   feeBufferMultiplier?: number;
   /** Hard ceiling for the total prepared fee in stroops. */
@@ -258,6 +261,8 @@ export class StellarClient {
   private accountCache: Map<string, { account: Account; timestamp: number }>;
   /** Optional wallet connector for transaction signing. */
   private wallet?: WalletConnector;
+  /** Middleware execution pipeline. */
+  readonly middleware: MiddlewarePipeline;
   /** Multiplier applied to simulated Soroban resources and fees. */
   readonly feeBufferMultiplier: number;
   /** Optional hard ceiling for the total prepared fee. */
@@ -326,6 +331,7 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     this.cacheTtlMs = options?.cacheTtlMs ?? 5000;
     this.accountSequenceCache = new Map();
 this.accountCache = new Map();
+    this.middleware = new MiddlewarePipeline(options?.middleware);
     this.feeBufferMultiplier = options?.feeBufferMultiplier ?? DEFAULT_FEE_BUFFER_MULTIPLIER;
 
     if (!Number.isFinite(this.feeBufferMultiplier) || this.feeBufferMultiplier < 1) {
@@ -368,6 +374,30 @@ this.accountCache = new Map();
     }
   }
 
+
+  /**
+   * Registers middleware for request and transaction workflows.
+   * Middleware executes in ascending `order`; equal order values preserve registration order.
+   * The returned function unregisters this middleware instance.
+   */
+  use(middleware: Middleware): MiddlewareRegistration {
+    return this.middleware.use(middleware);
+  }
+
+  /** Removes the first registered middleware with the provided name. */
+  removeMiddleware(name: string): boolean {
+    return this.middleware.remove(name);
+  }
+
+  private executeWithMiddleware<TPayload, TResult>(
+    workflow: 'request' | 'transaction',
+    operation: string,
+    payload: TPayload,
+    next: (payload: TPayload) => Promise<TResult> | TResult
+  ): Promise<TResult> {
+    return this.middleware.execute(workflow, operation, payload, (nextPayload) => next(nextPayload));
+  }
+
   /**
    * Checks the health of the RPC server with automatic retry on failure.
    * @returns The health check response containing status information
@@ -382,7 +412,7 @@ this.accountCache = new Map();
    */
   async getHealth(): Promise<ValidatedGetHealthResponse> {
     try {
-      const response = await retry(() => this.rpc.getHealth(), this.retryConfig);
+      const response = await this.executeWithMiddleware('request', 'getHealth', undefined, () => retry(() => this.rpc.getHealth(), this.retryConfig));
       return validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
     } catch (error) {
       if (error instanceof AxionveraError) throw error;
@@ -409,7 +439,7 @@ this.accountCache = new Map();
    */
   async getNetwork(): Promise<rpc.Api.GetNetworkResponse> {
     try {
-      return await retry(() => this.rpc.getNetwork(), this.retryConfig);
+      return await this.executeWithMiddleware('request', 'getNetwork', undefined, () => retry(() => this.rpc.getNetwork(), this.retryConfig));
     } catch (error) {
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getNetwork',
@@ -434,7 +464,7 @@ this.accountCache = new Map();
    */
   async getLatestLedger(): Promise<rpc.Api.GetLatestLedgerResponse> {
     try {
-      return await retry(() => this.rpc.getLatestLedger(), this.retryConfig);
+      return await this.executeWithMiddleware('request', 'getLatestLedger', undefined, () => retry(() => this.rpc.getLatestLedger(), this.retryConfig));
     } catch (error) {
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getLatestLedger',
@@ -488,7 +518,7 @@ this.accountCache = new Map();
    * ```
    */
   async getAccount(publicKey: string): Promise<Account> {
-    return retry(() => this.rpc.getAccount(publicKey), this.retryConfig);
+    return this.executeWithMiddleware('request', 'getAccount', { publicKey }, ({ publicKey }) => retry(() => this.rpc.getAccount(publicKey), this.retryConfig));
   }
 
   /**
@@ -879,7 +909,7 @@ this.accountCache = new Map();
     tx: Transaction | FeeBumpTransaction
   ): Promise<rpc.Api.SimulateTransactionResponse> {
     try {
-      const result = await this.rpc.simulateTransaction(tx);
+      const result = await this.executeWithMiddleware('transaction', 'simulateTransaction', { tx }, ({ tx }) => this.rpc.simulateTransaction(tx));
       validateRpcResponse(SimulateTransactionResponseSchema, result, 'simulateTransaction');
       if (rpc.Api.isSimulationError(result)) {
         throw new SimulationFailedError(result.error, { simulationResult: result });
@@ -976,7 +1006,7 @@ this.accountCache = new Map();
       const tx = builder.setTimeout(timeoutInSeconds).build();
 
       // Simulate the combined transaction
-      const result = await this.rpc.simulateTransaction(tx);
+      const result = await this.executeWithMiddleware('transaction', 'simulateBatch', { tx, operationCount }, ({ tx }) => this.rpc.simulateTransaction(tx));
 
       if (rpc.Api.isSimulationError(result)) {
         throw new SimulationFailedError(result.error, { simulationResult: result });
@@ -1032,7 +1062,7 @@ this.accountCache = new Map();
   async prepareTransaction(tx: Transaction | FeeBumpTransaction): Promise<Transaction> {
     if (tx instanceof FeeBumpTransaction) {
       try {
-        return await this.rpc.prepareTransaction(tx);
+        return await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx }, ({ tx }) => this.rpc.prepareTransaction(tx));
       } catch (error) {
         throw toAxionveraError(error, "Failed to prepare transaction");
       }
@@ -1041,7 +1071,7 @@ this.accountCache = new Map();
     try {
       const simulation = await this.simulateTransaction(tx);
       const assembledTx = rpc.assembleTransaction(tx, simulation).build();
-      return this.applyFeeBuffer(assembledTx);
+      return await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx: assembledTx }, ({ tx }) => this.applyFeeBuffer(tx));
     } catch (error) {
       if (error instanceof AxionveraError) {
         throw error;
@@ -1114,7 +1144,7 @@ this.accountCache = new Map();
       }
 
       // Submit either original or signed transaction
-      const result = await this.rpc.sendTransaction(finalTx);
+      const result = await this.executeWithMiddleware('transaction', 'sendTransaction', { tx: finalTx }, ({ tx }) => this.rpc.sendTransaction(tx));
       const hash = (result as any).hash ?? (result as any).id ?? "";
       const status = (result as any).status ?? (result as any).statusText ?? "unknown";
       return { hash, status, raw: result };
@@ -1138,7 +1168,7 @@ this.accountCache = new Map();
    * ```
    */
   async getTransaction(hash: string): Promise<ValidatedGetTransactionResponse> {
-    const response = await retry(() => this.rpc.getTransaction(hash), this.retryConfig);
+    const response = await this.executeWithMiddleware('request', 'getTransaction', { hash }, ({ hash }) => retry(() => this.rpc.getTransaction(hash), this.retryConfig));
     return validateRpcResponse(GetTransactionResponseSchema, response, 'getTransaction');
   }
 
