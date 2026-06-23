@@ -61,6 +61,19 @@ export {
   DiagnosticsManager,
 } from './diagnostics';
 
+// Plugin System
+export {
+  PluginManager,
+  getPluginManager,
+  setPluginManager,
+} from './plugin';
+export type {
+  PluginConfig,
+  PluginInstance,
+  PluginManagerConfig,
+  PluginHooks,
+} from './plugin/types';
+
 
 // Dependency Injection
 export {
