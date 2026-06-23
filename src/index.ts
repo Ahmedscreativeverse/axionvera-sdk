@@ -140,3 +140,13 @@ export type {
   CreateTransactionOptions,
   TransactionStatusQuery,
 } from './transactions';
+
+// Offline Transaction Creation Workflow
+export { OfflineTransactionBuilder, MAX_OPERATIONS_PER_TRANSACTION } from './transactions';
+export { OFFLINE_TRANSACTION_PACKAGE_VERSION } from './transactions';
+export type {
+  OfflineSourceAccount,
+  OfflineTransactionBuilderOptions,
+  OfflineTransactionValidationResult,
+  OfflineTransactionPackage,
+} from './transactions';
