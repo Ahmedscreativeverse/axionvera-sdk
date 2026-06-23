@@ -29,6 +29,52 @@ export {
   normalizeSimulationError,
 } from './errors/axionveraError';
 
+// Metrics, Telemetry & Observability
+export { MetricsCollector, metricsCollector } from './metrics';
+export { TelemetryService, telemetryService, TelemetryFlushHandler } from './telemetry';
+export { ObservabilityService, observabilityService } from './observability';
+export {
+  ProfilingService,
+  profilingService,
+  ProfileOptions,
+  ProfiledCallMetric,
+  ProfilingConfig,
+  ProfilingLevel,
+  ProfilingReport,
+} from './profiling';
+export {
+  TelemetryConfig,
+  DEFAULT_TELEMETRY_CONFIG,
+  TelemetryEvent,
+  MetricCounter,
+  MetricGauge,
+  MetricHistogram,
+  MetricsSnapshot,
+} from './telemetry/types';
+export {
+  ObservabilityConfig,
+  DEFAULT_OBSERVABILITY_CONFIG,
+  DiagnosticsReport,
+  TraceSpan,
+} from './observability/types';
+export {
+  DiagnosticsManager,
+} from './diagnostics';
+
+// Plugin System
+export {
+  PluginManager,
+  getPluginManager,
+  setPluginManager,
+} from './plugin';
+export type {
+  PluginConfig,
+  PluginInstance,
+  PluginManagerConfig,
+  PluginHooks,
+} from './plugin/types';
+
+
 // Dependency Injection
 export {
   ServiceContainer,

@@ -33,6 +33,8 @@ import { Logger } from "../utils/logger";
 import { WalletConnector } from "../wallet/walletConnector";
 import { ServiceContainer, createServiceContainer } from "../core/serviceContainer";
 import { ServiceOverrides } from "../core/serviceInterfaces";
+import { telemetryService, metricsCollector } from "../telemetry";
+import { getPluginManager, PluginManager } from "../plugin";
 
 const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.15;
 
@@ -76,6 +78,10 @@ export type StellarClientOptions = {
   accountFetchTimeoutMs?: number;
   /** TTL in milliseconds for cached account sequence (default: 5000) */
   cacheTtlMs?: number;
+  /** Plugin manager to use (defaults to the global plugin manager) */
+  pluginManager?: PluginManager;
+  /** Whether to use the plugin manager (default: true) */
+  usePluginManager?: boolean;
 };
 
 export type TransactionSendResult = {
@@ -302,67 +308,92 @@ export class StellarClient {
    * ```
    */
    constructor(options?: StellarClientOptions) {
-     const config = resolveNetworkConfig(options);
-     this.network = config.network;
-     this.rpcUrl = config.rpcUrl;
-     this.networkPassphrase = config.networkPassphrase;
+    let processedOptions = options || {};
+    const usePluginManager = processedOptions.usePluginManager !== false;
+    const pluginManager = processedOptions.pluginManager || getPluginManager();
 
-     // Validate RPC URL has a protocol
-     if (!this.rpcUrl.startsWith('http://') && !this.rpcUrl.startsWith('https://')) {
-       throw new AxionveraError('RPC URL must include a protocol (http:// or https://)');
-     }
+    // Apply plugins to options first
+    if (usePluginManager) {
+      // We'll handle async hooks in a static create method, but for sync compatibility,
+      // apply sync hooks now and async hooks later
+      processedOptions = this.applySyncPluginHooks(processedOptions, pluginManager);
+    }
 
-     // Security guard: prevent insecure HTTP in production unless explicitly allowed
-     const isProduction = process.env.NODE_ENV === 'production';
-     const isHttp = this.rpcUrl.startsWith('http://');
-     const isLocalhost = isLocalhostUrl(this.rpcUrl);
-     const allowHttp = options?.allowHttp ?? false;
+    const config = resolveNetworkConfig(processedOptions);
+    this.network = config.network;
+    this.rpcUrl = config.rpcUrl;
+    this.networkPassphrase = config.networkPassphrase;
 
-     if (isProduction && isHttp && !isLocalhost && !allowHttp) {
-       throw new InsecureNetworkError(
-         'Insecure RPC connection in production: HTTP endpoint detected. ' +
-         'Use HTTPS for production or set allowHttp: true to override. ' +
-         'Note: localhost endpoints are always permitted.'
-       );
-     }
+    // Validate RPC URL has a protocol
+    if (!this.rpcUrl.startsWith('http://') && !this.rpcUrl.startsWith('https://')) {
+      throw new AxionveraError('RPC URL must include a protocol (http:// or https://)');
+    }
 
-     this.concurrencyConfig = {
+    // Security guard: prevent insecure HTTP in production unless explicitly allowed
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isHttp = this.rpcUrl.startsWith('http://');
+    const isLocalhost = isLocalhostUrl(this.rpcUrl);
+    const allowHttp = processedOptions?.allowHttp ?? false;
+
+    if (isProduction && isHttp && !isLocalhost && !allowHttp) {
+      throw new InsecureNetworkError(
+        'Insecure RPC connection in production: HTTP endpoint detected. ' +
+        'Use HTTPS for production or set allowHttp: true to override. ' +
+        'Note: localhost endpoints are always permitted.'
+      );
+    }
+
+    this.concurrencyConfig = {
       ...DEFAULT_CONCURRENCY_CONFIG,
-      ...options?.concurrencyConfig
+      ...processedOptions?.concurrencyConfig
     };
-    this.concurrencyEnabled = !!options?.concurrencyConfig;
-    this.retryConfig = options?.retryConfig ?? {};
-    const serviceOverrides = {
-      ...options?.services,
-      rpcClient: options?.rpcClient ?? options?.services?.rpcClient,
+    this.concurrencyEnabled = !!processedOptions?.concurrencyConfig;
+    this.retryConfig = processedOptions?.retryConfig ?? {};
+
+    // Combine service overrides from options and plugins
+    let serviceOverrides = {
+      ...processedOptions?.services,
+      rpcClient: processedOptions?.rpcClient ?? processedOptions?.services?.rpcClient,
     };
-    const container = options?.container ?? createServiceContainer(serviceOverrides);
+
+    if (usePluginManager) {
+      serviceOverrides = { ...serviceOverrides, ...pluginManager.getServiceOverrides() };
+    }
+
+    const container = processedOptions?.container ?? createServiceContainer(serviceOverrides);
     this.httpClient = container.getHttpClient({ retryConfig: this.retryConfig });
-    this.logger = options?.logger ?? container.getLogger();
-this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
-    this.cacheTtlMs = options?.cacheTtlMs ?? 5000;
+    this.logger = processedOptions?.logger ?? container.getLogger();
+    this.accountFetchTimeoutMs = processedOptions?.accountFetchTimeoutMs ?? 2000;
+    this.cacheTtlMs = processedOptions?.cacheTtlMs ?? 5000;
     this.accountSequenceCache = new Map();
-this.accountCache = new Map();
-    this.middleware = new MiddlewarePipeline(options?.middleware);
-    this.feeBufferMultiplier = options?.feeBufferMultiplier ?? DEFAULT_FEE_BUFFER_MULTIPLIER;
+    this.accountCache = new Map();
+
+    // Combine middleware from options and plugins
+    let middleware = processedOptions?.middleware || [];
+    if (usePluginManager) {
+      middleware = [...middleware, ...pluginManager.getMiddleware()];
+    }
+
+    this.middleware = new MiddlewarePipeline(middleware);
+    this.feeBufferMultiplier = processedOptions?.feeBufferMultiplier ?? DEFAULT_FEE_BUFFER_MULTIPLIER;
 
     if (!Number.isFinite(this.feeBufferMultiplier) || this.feeBufferMultiplier < 1) {
       throw new ValidationError("feeBufferMultiplier must be a finite number greater than or equal to 1");
     }
 
-    if (options?.maxFeeLimit !== undefined) {
-      if (!Number.isInteger(options.maxFeeLimit) || options.maxFeeLimit <= 0) {
+    if (processedOptions?.maxFeeLimit !== undefined) {
+      if (!Number.isInteger(processedOptions.maxFeeLimit) || processedOptions.maxFeeLimit <= 0) {
         throw new ValidationError("maxFeeLimit must be a positive integer");
       }
 
-      this.maxFeeLimit = BigInt(options.maxFeeLimit);
+      this.maxFeeLimit = BigInt(processedOptions.maxFeeLimit);
     }
 
     // Initialize WebSocket manager if configuration is provided
-    if (options?.webSocketConfig) {
+    if (processedOptions?.webSocketConfig) {
       this.webSocketManager = container.getWebSocketManager({
         rpcUrl: this.rpcUrl,
-        config: options.webSocketConfig,
+        config: processedOptions.webSocketConfig,
         logger: this.logger,
       });
     }
@@ -373,6 +404,34 @@ this.accountCache = new Map();
       concurrencyEnabled: this.concurrencyEnabled,
       concurrencyConfig: this.concurrencyConfig,
     });
+
+    // Apply plugins to client
+    if (usePluginManager) {
+      // Use setTimeout to allow async initialization without breaking constructor return type
+      setTimeout(async () => {
+        await pluginManager.applyToClient(this);
+      }, 0);
+    }
+  }
+
+  /**
+   * Apply synchronous plugin hooks to options
+   */
+  private applySyncPluginHooks(options: StellarClientOptions, pluginManager: PluginManager): StellarClientOptions {
+    let processedOptions = { ...options };
+
+    for (const plugin of pluginManager.getInstalled()) {
+      const hook = plugin.config.hooks?.beforeClientInit;
+      if (hook && hook.constructor.name === 'Function') {
+        // Only apply sync hooks in constructor
+        const result = hook(processedOptions);
+        if (!(result instanceof Promise)) {
+          processedOptions = result;
+        }
+      }
+    }
+
+    return processedOptions;
   }
 
 
@@ -412,10 +471,18 @@ this.accountCache = new Map();
    * ```
    */
   async getHealth(): Promise<ValidatedGetHealthResponse> {
+    const start = Date.now();
+    metricsCollector.increment('requests.total', { operation: 'getHealth', network: this.network });
     try {
       const response = await this.executeWithMiddleware('request', 'getHealth', undefined, () => retry(() => this.rpc.getHealth(), this.retryConfig));
-      return validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
+      const validated = validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
+      metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'success' });
+      telemetryService.track('request_success', { operation: 'getHealth', network: this.network, duration: Date.now() - start });
+      return validated;
     } catch (error) {
+      metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'error' });
+      metricsCollector.increment('requests.errors', { operation: 'getHealth', network: this.network });
+      telemetryService.track('request_error', { operation: 'getHealth', network: this.network, error: error instanceof Error ? error.message : String(error) });
       if (error instanceof AxionveraError) throw error;
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getHealth',
@@ -860,14 +927,21 @@ this.accountCache = new Map();
   async simulateTransaction(
     tx: Transaction | FeeBumpTransaction
   ): Promise<rpc.Api.SimulateTransactionResponse> {
+    const start = Date.now();
+    metricsCollector.increment('transactions.simulate', { network: this.network });
     try {
       const result = await this.executeWithMiddleware('transaction', 'simulateTransaction', { tx }, ({ tx }) => this.rpc.simulateTransaction(tx));
       validateRpcResponse(SimulateTransactionResponseSchema, result, 'simulateTransaction');
       if (rpc.Api.isSimulationError(result)) {
         throw new SimulationFailedError(result.error, { simulationResult: result });
       }
+      metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'success' });
+      telemetryService.track('transaction_simulate_success', { network: this.network, duration: Date.now() - start });
       return result;
     } catch (error) {
+      metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'error' });
+      metricsCollector.increment('transactions.simulate_errors', { network: this.network });
+      telemetryService.track('transaction_simulate_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
       if (error instanceof AxionveraError) throw error;
       throw new SimulationFailedError(
         error instanceof Error ? error.message : 'Transaction simulation failed',
@@ -1061,7 +1135,8 @@ this.accountCache = new Map();
    */
   async sendTransaction(tx: Transaction | FeeBumpTransaction): Promise<TransactionSendResult> {
     let finalTx: Transaction | FeeBumpTransaction = tx;
-
+    const start = Date.now();
+    metricsCollector.increment('transactions.send', { network: this.network });
     try {
       // If a wallet is available, sign the transaction before submission
       if (this.wallet) {
@@ -1099,8 +1174,13 @@ this.accountCache = new Map();
       const result = await this.executeWithMiddleware('transaction', 'sendTransaction', { tx: finalTx }, ({ tx }) => this.rpc.sendTransaction(tx));
       const hash = (result as any).hash ?? (result as any).id ?? "";
       const status = (result as any).status ?? (result as any).statusText ?? "unknown";
+      metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'success' });
+      telemetryService.track('transaction_send_success', { network: this.network, duration: Date.now() - start, hash, status });
       return { hash, status, raw: result };
     } catch (error) {
+      metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'error' });
+      metricsCollector.increment('transactions.send_errors', { network: this.network });
+      telemetryService.track('transaction_send_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
       throw normalizeTransactionError(error);
     }
   }
