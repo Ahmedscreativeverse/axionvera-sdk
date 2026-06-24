@@ -1,54 +1,58 @@
 import {
-  Account,
-  Address,
-  Contract,
-  FeeBumpTransaction,
-  Keypair,
-  nativeToScVal,
-  scValToNative,
-  rpc,
-  scValToNative,
-  SorobanDataBuilder,
-  Transaction,
-  TransactionBuilder,
-  xdr
+    Account,
+Address,
+Contract,
+FeeBumpTransaction,
+Keypair,
+nativeToScVal,
+scValToNative,
+rpc,
+SorobanDataBuilder,
+Transaction,
+TransactionBuilder,
+xdr
 } from "@stellar/stellar-sdk";
 
 import {
-  AxionveraNetwork,
-  getNetworkPassphrase,
-  resolveNetworkConfig
+AxionveraNetwork,
+getNetworkPassphrase,
+resolveNetworkConfig
 } from "../utils/networkConfig";
 import { ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG, createConcurrencyControlledClient } from "../utils/concurrencyQueue";
 import { RetryConfig, createHttpClientWithRetry, retry } from "../utils/httpInterceptor";
-import { NetworkError, toAxionveraError, InsecureNetworkError, AxionveraError } from "../errors/axionveraError";
 import {
-  validateRpcResponse,
-  GetHealthResponseSchema,
-  SimulateTransactionResponseSchema,
-  GetTransactionResponseSchema,
-  ValidatedGetHealthResponse,
-  ValidatedGetTransactionResponse,
-} from "../utils/rpcSchemas";
-import { NetworkError, toAxionveraError, InsecureNetworkError, AxionveraError, TransactionTimeoutError, ValidationError } from "../errors/axionveraError";
+NetworkError,
+toAxionveraError,
+InsecureNetworkError,
+AxionveraError,
+TransactionTimeoutError,
+ValidationError
+} from "../errors/axionveraError";
 import { LogLevel, Logger } from "../utils/logger";
 import { WebSocketManager, EventFilter, SorobanEvent, WebSocketConfig } from "./websocket";
 import { CloudWatchConfig } from "../utils/logging/cloudwatch";
 import {
-  FetchTransactionHistoryOptions,
-  TransactionHistoryResult,
-  parseTransaction,
-  sortByTimestamp,
-  filterByActionType
+validateRpcResponse,
+GetHealthResponseSchema,
+SimulateTransactionResponseSchema,
+GetTransactionResponseSchema,
+ValidatedGetHealthResponse,
+ValidatedGetTransactionResponse,
+} from "../utils/rpcSchemas";
+import {
+FetchTransactionHistoryOptions,
+TransactionHistoryResult,
+parseTransaction,
+sortByTimestamp,
+filterByActionType
 } from "../utils/transactionHistory";
+import { parseSorobanEvent, ParsedSorobanEvent } from "../utils/sorobanEventParser";
 
 const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.15;
 
 /**
- * Checks if a URL points to a localhost address.
- * @param url - The URL to check
- * @returns true if the URL hostname is localhost, 127.0.0.1, or ::1
- */
+* Checks if a URL points to a localhost address.
+*/
 function isLocalhostUrl(url: string): boolean {
   try {
     const hostname = new URL(url).hostname;
@@ -71,14 +75,10 @@ export type StellarClientOptions = {
   webSocketConfig?: WebSocketConfig;
   cloudWatchConfig?: CloudWatchConfig;
   customHeaders?: Record<string, string>;
-  /** Multiplier applied to simulated Soroban resources and fees (default: 1.15). */
   feeBufferMultiplier?: number;
-  /** Hard ceiling for the total prepared fee in stroops. */
   maxFeeLimit?: number;
   allowHttp?: boolean;
-  /** Timeout in milliseconds for account fetching (default: 2000) */
   accountFetchTimeoutMs?: number;
-  /** TTL in milliseconds for cached account sequence (default: 5000) */
   cacheTtlMs?: number;
 };
 
@@ -97,18 +97,14 @@ export type GetContractEventsOptions = {
   startTime?: Date | string | number | "last24Hours";
 };
 
-export type ContractEventResult = Omit<rpc.Api.EventResponse, "topic" | "value"> & {
-  topic: unknown[];
-  value: unknown;
+export type GetContractEventsResult = {
+  events: ParsedSorobanEvent[];
+  pagingToken?: string;
 };
 
-export type GetContractEventsResult = {
-  events: ContractEventResult[];
-  pagingToken?: string;
 /** Snapshot version for forward-compatibility of (de)serialized state. */
 export const HYDRATION_STATE_VERSION = 1 as const;
 
-/** A JSON-serializable value, with Date allowed inside simulation context. */
 export type SerializableValue =
   | string
   | number
@@ -130,9 +126,7 @@ export interface PendingTransaction {
 }
 
 export interface TrackedTransaction extends PendingTransaction {
-  /** Resolves with the final transaction result; rejects on error/timeout. */
   promise: Promise<unknown>;
-  /** Cancels the polling loop without rejecting outstanding awaiters. */
   cancel: () => void;
 }
 
@@ -156,7 +150,6 @@ export interface TrackTransactionOptions {
   simulationContext?: SimulationContext;
   intervalMs?: number;
   timeoutMs?: number;
-  /** Absolute deadline; takes precedence over timeoutMs when restoring. */
   deadline?: Date;
   label?: string;
 }
@@ -164,18 +157,12 @@ export interface TrackTransactionOptions {
 const DATE_MARKER = "__date" as const;
 
 function freezeDates(value: SerializableValue): SerializableValue {
-  if (value instanceof Date) {
-    return { [DATE_MARKER]: value.toISOString() };
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => freezeDates(item));
-  }
+  if (value instanceof Date) return { [DATE_MARKER]: value.toISOString() };
+  if (Array.isArray(value)) return value.map((item) => freezeDates(item));
   if (value !== null && typeof value === "object") {
     const out: { [key: string]: SerializableValue } = {};
     for (const key of Object.keys(value)) {
-      out[key] = freezeDates(
-        (value as { [key: string]: SerializableValue })[key] as SerializableValue
-      );
+      out[key] = freezeDates((value as { [key: string]: SerializableValue })[key] as SerializableValue);
     }
     return out;
   }
@@ -183,17 +170,13 @@ function freezeDates(value: SerializableValue): SerializableValue {
 }
 
 function thawDates(value: SerializableValue): SerializableValue {
-  if (Array.isArray(value)) {
-    return value.map((item) => thawDates(item));
-  }
+  if (Array.isArray(value)) return value.map((item) => thawDates(item));
   if (value !== null && typeof value === "object" && !(value instanceof Date)) {
     const obj = value as { [key: string]: SerializableValue };
     const marker = obj[DATE_MARKER];
     if (typeof marker === "string" && Object.keys(obj).length === 1) {
       const parsed = new Date(marker);
-      if (!Number.isNaN(parsed.getTime())) {
-        return parsed;
-      }
+      if (!Number.isNaN(parsed.getTime())) return parsed;
     }
     const out: { [key: string]: SerializableValue } = {};
     for (const key of Object.keys(obj)) {
@@ -213,6 +196,7 @@ function thawContext(ctx: SimulationContext | undefined): SimulationContext | un
   if (!ctx) return undefined;
   return thawDates(ctx) as SimulationContext;
 }
+
 type TransactionResponseRecord = Record<string, unknown>;
 
 export type TransactionPollResult = TransactionResponseRecord & {
@@ -220,26 +204,11 @@ export type TransactionPollResult = TransactionResponseRecord & {
   ledger: number | null;
 };
 
-/**
- * RPC gateway for interacting with Soroban networks.
- *
- * Provides methods for querying network state, simulating transactions,
- * preparing transactions with fees, and submitting signed transactions.
- *
- * @example
- * ```typescript
- * import { StellarClient } from "axionvera-sdk";
- *
- * const client = new StellarClient({ network: "testnet" });
- * const health = await client.getHealth();
- * ```
- */
 export abstract class BaseStellarRpcClient {
-  // ...
+  abstract executeWithErrorHandling<T>(action: () => Promise<T>, message: string): Promise<T>;
 }
 
 export class StellarClient extends BaseStellarRpcClient {
-  /** The network this client is connected to. */
   readonly network: AxionveraNetwork;
   /** The RPC URL(s) this client uses (for failover). */
   readonly rpcUrls: string[];
@@ -251,28 +220,16 @@ export class StellarClient extends BaseStellarRpcClient {
   private rpcServers: rpc.Server[];
   /** The HTTP client with retry interceptors. */
   readonly httpClient;
-  /** The effective retry configuration after merging with defaults. */
   readonly retryConfig: Partial<RetryConfig>;
-  /** The effective concurrency configuration after merging with defaults. */
   private readonly concurrencyConfig: ConcurrencyConfig;
-  /** Indicates whether concurrency control was explicitly enabled. */
   private readonly concurrencyEnabled: boolean;
-  /** The internal logger instance. */
   private readonly logger: Logger;
-  /** WebSocket manager for real-time events. */
   private webSocketManager: WebSocketManager | null = null;
-  /** In-memory registry of currently polling transactions. */
   private readonly pendingTransactions = new Map<string, TrackedTransaction>();
-/** Timeout for account fetching in milliseconds. */
   readonly accountFetchTimeoutMs: number;
-  /** TTL for cached account sequence in milliseconds. */
   readonly cacheTtlMs: number;
-
-  /** Private cache for account sequences with timestamps. */
   private accountSequenceCache: Map<string, { sequence: bigint; timestamp: number }>;
-  /** Multiplier applied to simulated Soroban resources and fees. */
   private readonly feeBufferMultiplier: number;
-  /** Optional hard ceiling for the total prepared fee. */
   private readonly maxFeeLimit?: bigint;
 
   /** Get the current RPC URL in use. */
@@ -316,22 +273,28 @@ export class StellarClient extends BaseStellarRpcClient {
         }
       }
 
-      super();
+    if (isProduction && isHttp && !isLocalhost && !allowHttp) {
+      throw new InsecureNetworkError(
+        'Insecure RPC connection in production: HTTP endpoint detected. ' +
+        'Use HTTPS for production or set allowHttp: true to override.'
+      );
+    }
 
+    super();
       this.network = network;
       this.rpcUrls = rpcUrls;
       this.currentRpcIndex = 0;
       this.networkPassphrase = networkPassphrase;
 
-     this.concurrencyConfig = {
-      ...DEFAULT_CONCURRENCY_CONFIG,
-      ...options?.concurrencyConfig
-    };
+    this.network = network;
+    this.rpcUrl = rpcUrl;
+    this.networkPassphrase = networkPassphrase;
+    this.concurrencyConfig = { ...DEFAULT_CONCURRENCY_CONFIG, ...options?.concurrencyConfig };
     this.concurrencyEnabled = !!options?.concurrencyConfig;
     this.retryConfig = options?.retryConfig ?? {};
     this.httpClient = createHttpClientWithRetry(this.retryConfig);
     this.logger = new Logger(options?.logLevel ?? 'none', options?.cloudWatchConfig);
-this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
+    this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     this.cacheTtlMs = options?.cacheTtlMs ?? 5000;
     this.accountSequenceCache = new Map();
     this.feeBufferMultiplier = options?.feeBufferMultiplier ?? DEFAULT_FEE_BUFFER_MULTIPLIER;
@@ -344,7 +307,6 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
       if (!Number.isInteger(options.maxFeeLimit) || options.maxFeeLimit <= 0) {
         throw new ValidationError("maxFeeLimit must be a positive integer");
       }
-
       this.maxFeeLimit = BigInt(options.maxFeeLimit);
     }
 
@@ -360,17 +322,12 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
       return baseRpc;
     });
 
-    // Initialize WebSocket manager if configuration is provided
     if (options?.webSocketConfig) {
-      this.webSocketManager = new WebSocketManager(
-        this.rpcUrl,
-        options.webSocketConfig,
-        {
+      this.webSocketManager = new WebSocketManager(this.rpcUrl, options.webSocketConfig, {
           onEvent: (event) => this.logger.debug('WebSocket event received:', event),
           onConnectionChange: (connected) => this.logger.debug(`WebSocket connection changed: ${connected}`),
           logger: this.logger,
-        }
-      );
+      });
     }
   }
 
@@ -383,6 +340,12 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
       return false;
     }
 
+    if (options?.rpcClient) {
+      this.rpc = options.rpcClient;
+    } else {
+      const allowHttp = this.rpcUrl.startsWith("http://");
+      const baseRpc = new rpc.Server(this.rpcUrl, { allowHttp });
+      this.rpc = this.concurrencyEnabled ? createConcurrencyControlledClient(baseRpc, this.concurrencyConfig) : baseRpc;
     this.currentRpcIndex = (this.currentRpcIndex + 1) % this.rpcUrls.length;
     this.logger.info(`Switched to RPC URL: ${this.rpcUrl}`);
     return true;
@@ -472,7 +435,7 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
       const normalizedStartLedger = Math.min(startLedger, endLedger);
       const normalizedEndLedger = Math.max(startLedger, endLedger);
 
-      return this.fetchContractEventsRange({
+      const result = await this.fetchContractEventsRange({
         contractId,
         topicFilters,
         startLedger: normalizedStartLedger,
@@ -481,6 +444,11 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
         cursor: options.cursor,
         fetchAll: options.fetchAll ?? false
       });
+
+      return {
+        ...result,
+        events: result.events.map((e) => parseSorobanEvent(e))
+      };
     }, `Failed to fetch contract events for ${contractId}`);
   }
 
@@ -500,277 +468,118 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     );
   }
 
-  /**
-   * Retrieves an account's information with aggressive timeout and cached fallback.
-   * If the network request fails or times out, returns an account with cached sequence + 1.
-   * @param publicKey - The account's public key
-   * @returns The account information
-   * @throws Error if both network request fails and no valid cache exists
-   */
   async getAccountWithCache(publicKey: string): Promise<Account> {
     try {
-      // Try to fetch account with aggressive timeout
       const account = await this.getAccountWithTimeout(publicKey, this.accountFetchTimeoutMs);
-      // Update cache on successful fetch
       this.updateCache(publicKey, account.sequenceNumber().toString());
       return account;
     } catch (error) {
-      // Network failed, try to use cached sequence
       const cached = this.getCachedSequence(publicKey);
       if (cached) {
         this.logger.debug(`Using cached sequence for ${publicKey}: ${cached.sequence}`);
-        // Increment the cached sequence for sequential offline support
         const newSequence = cached.sequence + 1n;
-        // Update cache with the new incremented value
         this.updateCache(publicKey, newSequence.toString());
-        // Create account with the incremented sequence
         return new Account(publicKey, newSequence.toString());
       }
-      // No cache available, throw error
-      throw new AxionveraError(
-        `Failed to fetch account and no valid cache available for ${publicKey}`,
-        { originalError: error }
-      );
+      throw new AxionveraError(`Failed to fetch account and no valid cache available for ${publicKey}`, { originalError: error });
     }
   }
 
-  /**
-   * Fetches account with a timeout.
-   * @param publicKey - The account's public key
-   * @param timeoutMs - Timeout in milliseconds
-   * @returns The account information
-   */
   private async getAccountWithTimeout(publicKey: string, timeoutMs: number): Promise<Account> {
     return Promise.race([
       this.getAccount(publicKey),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Account fetch timeout after ${timeoutMs}ms`)), timeoutMs)
-      )
-    ]);
-  }
+)
+]);
+}
 
-  /**
-   * Updates the cache with the current account sequence.
-   * @param publicKey - The account's public key
-   * @param sequence - The current sequence number
-   */
-  private updateCache(publicKey: string, sequence: string): void {
+private updateCache(publicKey: string, sequence: string): void {
     this.accountSequenceCache.set(publicKey, {
       sequence: BigInt(sequence),
       timestamp: Date.now()
     });
   }
 
-  /**
-   * Retrieves a cached sequence if it's still valid (within TTL).
-   * @param publicKey - The account's public key
-   * @returns The cached sequence info or undefined if invalid
-   */
   private getCachedSequence(publicKey: string): { sequence: bigint; timestamp: number } | undefined {
     const cached = this.accountSequenceCache.get(publicKey);
     if (!cached) return undefined;
-
     const now = Date.now();
     if (now - cached.timestamp > this.cacheTtlMs) {
-      // Cache expired
       this.accountSequenceCache.delete(publicKey);
       return undefined;
     }
-
     return cached;
   }
 
-  /**
-   * Clears the cache for a specific account or all accounts.
-   * @param publicKey - Optional public key to clear specific cache
-   */
   clearCache(publicKey?: string): void {
-    if (publicKey) {
-      this.accountSequenceCache.delete(publicKey);
-    } else {
-      this.accountSequenceCache.clear();
-    }
+    if (publicKey) this.accountSequenceCache.delete(publicKey);
+    else this.accountSequenceCache.clear();
   }
 
-  /**
-   * Handles submission errors and invalidates cache on sequence errors.
-   * If the error indicates a bad sequence number (tx_bad_seq), the cache is cleared
-   * to prevent building transactions on top of an incorrect sequence.
-   * @param error - The error from transaction submission
-   * @param publicKey - The account public key to clear cache for
-   * @returns Whether the cache was cleared
-   */
   handleSubmissionError(error: unknown, publicKey?: string): boolean {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
-    // Check for Stellar sequence error patterns
-    const sequenceErrorPatterns = [
-      'tx_bad_seq',
-      'bad sequence',
-      'sequence number',
-      'sequence mismatch'
-    ];
-    
-    const isSequenceError = sequenceErrorPatterns.some(pattern =>
-      errorMessage.toLowerCase().includes(pattern)
-    );
-    
+    const sequenceErrorPatterns = ['tx_bad_seq', 'bad sequence', 'sequence number', 'sequence mismatch'];
+    const isSequenceError = sequenceErrorPatterns.some(pattern => errorMessage.toLowerCase().includes(pattern));
+
     if (isSequenceError) {
       this.logger.warn(`Sequence error detected, clearing cache for ${publicKey || 'all accounts'}`);
       this.clearCache(publicKey);
       return true;
     }
-    
     return false;
   }
 
-  /**
-   * Cleans up expired cache entries to prevent memory leaks.
-   * This should be called periodically in long-running applications.
-   * @returns Number of entries removed
-   */
   cleanupExpiredCache(): number {
     let removed = 0;
     const now = Date.now();
-    
     for (const [publicKey, cached] of this.accountSequenceCache.entries()) {
       if (now - cached.timestamp > this.cacheTtlMs) {
         this.accountSequenceCache.delete(publicKey);
         removed++;
       }
     }
-    
-    if (removed > 0) {
-      this.logger.debug(`Cleaned up ${removed} expired cache entries`);
-    }
-    
+    if (removed > 0) this.logger.debug(`Cleaned up ${removed} expired cache entries`);
     return removed;
   }
 
-  /**
-   * Submits multiple transactions in sequential order to prevent sequence conflicts.
-   * This is critical when building transactions offline with cached sequences.
-   * Transactions are submitted one at a time, waiting for each to succeed before submitting the next.
-   * 
-   * @param transactions - Array of signed transactions to submit
-   * @param options - Submission options
-   * @param options.onProgress - Callback called after each transaction submission
-   * @param options.sourcePublicKey - The source account public key for error handling
-   * @returns Array of submission results in the same order as input transactions
-   * 
-   * @example
-   * ```typescript
-   * // Build transactions while offline
-   * const tx1 = await buildTransactionOffline(account1);
-   * const tx2 = await buildTransactionOffline(account1);
-   * const tx3 = await buildTransactionOffline(account1);
-   * 
-   * // Submit them in order when back online
-   * const results = await client.submitTransactionsSequentially(
-   *   [tx1, tx2, tx3],
-   *   {
-   *     sourcePublicKey: account1.publicKey(),
-   *     onProgress: (index, result) => console.log(`Tx ${index + 1}: ${result.status}`)
-   *   }
-   * );
-   * ```
-   */
   async submitTransactionsSequentially(
     transactions: (Transaction | FeeBumpTransaction)[],
-    options?: {
-      onProgress?: (index: number, result: TransactionSendResult) => void;
-      sourcePublicKey?: string;
-    }
+    options?: { onProgress?: (index: number, result: TransactionSendResult) => void; sourcePublicKey?: string; }
   ): Promise<TransactionSendResult[]> {
     const results: TransactionSendResult[] = [];
-    
     for (let i = 0; i < transactions.length; i++) {
       try {
         const result = await this.sendTransaction(transactions[i]);
         results.push(result);
-        
-        if (options?.onProgress) {
-          options.onProgress(i, result);
-        }
-        
-        // If successful, wait a brief moment for the transaction to be processed
-        // This helps prevent race conditions with sequence numbers
+        if (options?.onProgress) options.onProgress(i, result);
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
-        // Handle submission error and clear cache if it's a sequence error
         const wasSequenceError = this.handleSubmissionError(error, options?.sourcePublicKey);
-        
-        // Re-throw with additional context
-        throw new Error(
-          `Transaction ${i + 1}/${transactions.length} failed${wasSequenceError ? ' (cache cleared due to sequence error)' : ''}: ${error instanceof Error ? error.message : String(error)}`
-        );
+        throw new Error(`Transaction ${i + 1}/${transactions.length} failed${wasSequenceError ? ' (cache cleared due to sequence error)' : ''}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    
     return results;
   }
 
-  /**
-   * Validates transaction fee based on current network conditions.
-   * This is useful when building transactions offline and needing to validate fees before submission.
-   * 
-   * @param transaction - The transaction to validate
-   * @param options - Fee validation options
-   * @param options.minFee - Minimum acceptable fee in stroops
-   * @param options.maxFee - Maximum acceptable fee in stroops
-   * @param options.simulate - Whether to simulate to get recommended fee (default: true)
-   * @returns The recommended fee if simulation succeeds, or current fee if validation passes
-   * @throws Error if fee is too low or simulation fails
-   * 
-   * @example
-   * ```typescript
-   * // Build transaction offline
-   * const tx = await buildTransactionOffline(account);
-   * 
-   * // Back online - validate fee
-   * const recommendedFee = await client.validateFee(tx, {
-   *   minFee: 100000,
-   *   maxFee: 500000
-   * });
-   * 
-   * // If recommended fee is different, rebuild transaction with new fee
-   * if (recommendedFee !== parseInt(tx.fee)) {
-   *   const updatedTx = await rebuildTransactionWithNewFee(tx, recommendedFee);
-   * }
-   * ```
-   */
   async validateFee(
     transaction: Transaction,
-    options?: {
-      minFee?: number;
-      maxFee?: number;
-      simulate?: boolean;
-    }
+    options?: { minFee?: number; maxFee?: number; simulate?: boolean; }
   ): Promise<number> {
     const simulate = options?.simulate ?? true;
     const minFee = options?.minFee ?? 100_000;
     const maxFee = options?.maxFee ?? 1_000_000;
-    
     const currentFee = parseInt(transaction.fee);
-    
-    if (currentFee < minFee) {
-      throw new Error(`Transaction fee ${currentFee} is below minimum ${minFee}`);
-    }
-    
-    if (currentFee > maxFee) {
-      throw new Error(`Transaction fee ${currentFee} exceeds maximum ${maxFee}`);
-    }
-    
+
+    if (currentFee < minFee) throw new Error(`Transaction fee ${currentFee} is below minimum ${minFee}`);
+    if (currentFee > maxFee) throw new Error(`Transaction fee ${currentFee} exceeds maximum ${maxFee}`);
+
     if (simulate) {
       try {
         const simulation = await this.simulateTransaction(transaction);
-        
         if (rpc.Api.isSimulationSuccess(simulation)) {
-          // Access the resource fee from simulation result
           const minResourceFee = simulation.minResourceFee ?? 100_000;
           const recommendedFee = parseInt(minResourceFee.toString());
-          
-          // If recommended fee is significantly higher (20% buffer), recommend it
           if (recommendedFee > currentFee * 1.2) {
             this.logger.info(`Recommended fee ${recommendedFee} is significantly higher than current ${currentFee}`);
             return recommendedFee;
@@ -780,20 +589,10 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
         this.logger.warn(`Fee simulation failed, using original fee: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    
-    // Return current fee if validation passes
     return currentFee;
   }
 
-  /**
-   * Simulates a transaction without submitting it.
-   * This is useful for testing transaction validity and getting expected costs.
-   * @param tx - The transaction to simulate
-   * @returns The simulation result
-   */
-  async simulateTransaction(
-    tx: Transaction | FeeBumpTransaction
-  ): Promise<rpc.Api.SimulateTransactionResponse> {
+  async simulateTransaction(tx: Transaction | FeeBumpTransaction): Promise<rpc.Api.SimulateTransactionResponse> {
     this.logger.debug("Simulating transaction");
     return this.executeWithErrorHandling(async () => {
       const response = await this.rpc.simulateTransaction(tx);
@@ -802,56 +601,6 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     }, "Failed to simulate transaction");
   }
 
-  /**
-   * Simulates multiple operations in a single batch transaction.
-   * This is more efficient than simulating operations one by one, especially when
-   * a user wants to perform multiple actions (e.g., deposit into 3 vaults).
-   *
-   * All operations are combined into a single transaction and sent to the Soroban RPC
-   * simulateTransaction endpoint, which returns results for each operation.
-   *
-   * Note: Be aware of Soroban transaction limits. A large batch may fail if it exceeds
-   * the maximum CPU/RAM limits for a single transaction.
-   *
-   * @param params - Batch simulation parameters
-   * @param params.operations - Array of XDR operations to simulate
-   * @param params.sourceAccount - The source account for the transaction
-   * @param params.fee - The fee per operation (default: 100_000)
-   * @param params.timeoutInSeconds - Transaction timeout in seconds (default: 60)
-   * @returns Array of simulation results, one for each operation
-   * @throws Error if the batch simulation fails
-   *
-   * @example
-   * ```typescript
-   * const client = new StellarClient({ network: "testnet" });
-   * const account = await client.getAccount(publicKey);
-   *
-   * // Build three deposit operations
-   * const op1 = buildContractCallOperation({
-   *   contractId: vault1,
-   *   method: "deposit",
-   *   args: [amount1]
-   * });
-   * const op2 = buildContractCallOperation({
-   *   contractId: vault2,
-   *   method: "deposit",
-   *   args: [amount2]
-   * });
-   * const op3 = buildContractCallOperation({
-   *   contractId: vault3,
-   *   method: "deposit",
-   *   args: [amount3]
-   * });
-   *
-   * // Simulate all three in one call
-   * const results = await client.simulateBatch({
-   *   operations: [op1, op2, op3],
-   *   sourceAccount: account
-   * });
-   *
-   * // results[0], results[1], results[2] contain the individual results
-   * ```
-   */
   async simulateBatch(params: {
     operations: xdr.Operation[];
     sourceAccount: Account;
@@ -859,29 +608,14 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     timeoutInSeconds?: number;
   }): Promise<rpc.Api.SimulateTransactionResponse['result']> {
     this.logger.debug(`Simulating batch of ${params.operations.length} operations`);
-
     return this.executeWithErrorHandling(async () => {
-      if (!params.operations || params.operations.length === 0) {
-        throw new AxionveraError('At least one operation is required for batch simulation');
-      }
-
-      // Calculate fee: multiply by number of operations
+      if (!params.operations || params.operations.length === 0) throw new AxionveraError('At least one operation is required for batch simulation');
       const operationCount = params.operations.length;
       const feePerOperation = params.fee ?? 100_000;
       const totalFee = (feePerOperation * operationCount).toString();
       const timeoutInSeconds = params.timeoutInSeconds ?? 60;
-
-      // Build a transaction with all operations
-      const builder = new TransactionBuilder(params.sourceAccount, {
-        fee: totalFee,
-        networkPassphrase: this.networkPassphrase
-      });
-
-      // Add all operations to the transaction
-      for (const operation of params.operations) {
-        builder.addOperation(operation);
-      }
-
+      const builder = new TransactionBuilder(params.sourceAccount, { fee: totalFee, networkPassphrase: this.networkPassphrase });
+      for (const operation of params.operations) builder.addOperation(operation);
       const tx = builder.setTimeout(timeoutInSeconds).build();
 
       // Simulate the combined transaction
@@ -898,66 +632,30 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     }, `Failed to simulate batch of ${params.operations.length} operations`);
   }
 
-  /**
-   * Simulates a pure read-only contract call without requiring a source account or sequence number.
-   * This dramatically speeds up dashboard loading times because the SDK doesn't need to fetch 
-   * the user's ledger sequence number before checking a read-only balance.
-   * 
-   * @param contractId - The contract ID to call
-   * @param method - The method name to call
-   * @param args - The arguments to pass to the method (optional)
-   * @returns The unwrapped scVal result directly
-   */
-  async simulateRead(
-    contractId: string,
-    method: string,
-    args?: any[]
-  ): Promise<xdr.ScVal> {
+  async simulateRead(contractId: string, method: string, args?: any[]): Promise<xdr.ScVal> {
     this.logger.debug(`Simulating read-only call to ${contractId}.${method}`);
-
     return this.executeWithErrorHandling(async () => {
-      // Create a dummy account with zeroed-out sequence for read-only simulation
-      const dummyAccount = new Account(
-        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH", // All zeros public key
-        "0" // Zero sequence number
-      );
-
-      // Convert args to ScVal if provided
+      const dummyAccount = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH", "0");
       const scVals = args ? args.map(arg => {
         if (typeof arg === 'string') {
-          try {
-            // Try to parse as address first
-            return Address.fromString(arg).toScVal();
-          } catch {
-            // Fall back to native conversion
-            return nativeToScVal(arg);
-          }
-        } else if (typeof arg === 'number' || typeof arg === 'bigint') {
-          return nativeToScVal(arg);
-        } else if (typeof arg === 'boolean') {
-          return nativeToScVal(arg);
-        } else if (arg === null || arg === undefined) {
-          return xdr.ScVal.scvVoid();
-        } else {
-          return nativeToScVal(arg);
-        }
+          try { return Address.fromString(arg).toScVal(); }
+          catch { return nativeToScVal(arg); }
+        } else if (typeof arg === 'number' || typeof arg === 'bigint') return nativeToScVal(arg);
+        else if (typeof arg === 'boolean') return nativeToScVal(arg);
+        else if (arg === null || arg === undefined) return xdr.ScVal.scvVoid();
+        else return nativeToScVal(arg);
       }) : [];
 
-      // Create the contract call operation
       const contract = new Contract(contractId);
       const operation = contract.call(method, ...scVals);
-
-      // Build a minimal transaction for simulation
-      const tx = new TransactionBuilder(dummyAccount, {
-        fee: "100", // Minimal fee for simulation
-        networkPassphrase: this.networkPassphrase
-      })
+      const tx = new TransactionBuilder(dummyAccount, { fee: "100", networkPassphrase: this.networkPassphrase })
         .addOperation(operation)
-        .setTimeout(30) // Short timeout for read operations
+        .setTimeout(30)
         .build();
 
-      // Simulate the transaction
       const simulationResult = await this.rpc.simulateTransaction(tx);
+      if (simulationResult.error) throw new NetworkError(`Simulation failed: ${simulationResult.error}`);
+      if (!simulationResult.result) throw new NetworkError('No result returned from simulation');
 
       // Check for simulation errors
       if (simulationResult.error) {
@@ -1734,291 +1432,4 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
     const message = typeof (error as any)?.message === 'string' ? (error as any).message : '';
     return statusCode === 413 || /payload too large|request entity too large|413/i.test(message);
   }
-
-  /**
-   * Get detailed queue status for monitoring
-   */
-  getQueueStatus() {
-    if (!this.concurrencyEnabled) {
-      return {
-        enabled: false,
-        message: 'Concurrency control is not enabled'
-      };
-    }
-
-    // Try to get detailed status from the wrapped client if it has the method
-    if ('getQueueStatus' in this.rpc && typeof this.rpc.getQueueStatus === 'function') {
-      return {
-        enabled: true,
-        ...this.rpc.getQueueStatus()
-      };
-    }
-
-    // Fallback to basic stats
-    return this.getConcurrencyStats();
-  }
-
-  subscribeToEvents(contractId: string, topics?: string[], pollingIntervalMs?: number): ContractEventEmitter;
-  subscribeToEvents(
-    filter: EventFilter,
-    callback: (event: SorobanEvent) => void
-  ): Promise<string>;
-  subscribeToEvents(
-    contractIdOrFilter: string | EventFilter,
-    topicsOrCallback: string[] | ((event: SorobanEvent) => void) = [],
-    pollingIntervalMs = 5000
-  ): string | ContractEventEmitter | Promise<string> {
-    if (typeof contractIdOrFilter === 'string') {
-      const contractId = contractIdOrFilter;
-      const topics = Array.isArray(topicsOrCallback) ? topicsOrCallback : [];
-      let emitter: ContractEventEmitter;
-      emitter = new ContractEventEmitter(
-        this,
-        contractId,
-        topics,
-        pollingIntervalMs,
-        () => {
-          this.eventEmitters.delete(emitter);
-        }
-      );
-
-      this.eventEmitters.add(emitter);
-      emitter.start();
-      return emitter;
-    }
-
-    if (!this.webSocketManager) {
-      throw new NetworkError('WebSocket manager not initialized. Please provide webSocketConfig in constructor.');
-    }
-
-    const callback = topicsOrCallback as (event: SorobanEvent) => void;
-
-    if (!this.webSocketManager.isConnected()) {
-      return this.webSocketManager.connect().then(() => this.webSocketManager!.subscribe(contractIdOrFilter, callback));
-    }
-
-    return this.webSocketManager.subscribe(contractIdOrFilter, callback);
-  }
-
-  /**
-   * Unsubscribe from real-time events.
-   * @param subscriptionId - The subscription ID returned by subscribeToEvents
-   */
-  unsubscribeFromEvents(subscriptionId: string | ContractEventEmitter): void {
-    if (typeof subscriptionId === 'string') {
-      if (this.webSocketManager) {
-        this.webSocketManager.unsubscribe(subscriptionId);
-      }
-      return;
-    }
-
-    subscriptionId.close();
-  }
-
-  /**
-   * Get WebSocket connection status and statistics.
-   */
-  getWebSocketStatus() {
-    if (!this.webSocketManager) {
-      return {
-        enabled: false,
-        connected: false,
-        subscriptions: 0,
-        message: 'WebSocket manager not initialized'
-      };
-    }
-
-    return {
-      enabled: true,
-      connected: this.webSocketManager.isConnected(),
-      subscriptions: this.webSocketManager.getSubscriptionCount(),
-    };
-  }
-
-  /**
-   * Disconnect WebSocket and cleanup resources.
-   */
-  disconnectWebSocket(): void {
-    if (this.webSocketManager) {
-      this.webSocketManager.disconnect();
-    }
-  }
-
-  /**
-   * Get CloudWatch logging statistics.
-   */
-  getCloudWatchStats() {
-    return this.logger.getCloudWatchStats();
-  }
-
-  /**
-   * Alias for cleanup(). Removes all active subscriptions and listeners.
-   * Useful in React useEffect cleanup blocks.
-   * 
-   * @example
-   * ```typescript
-   * useEffect(() => {
-   *   return () => client.removeAllListeners();
-   * }, [client]);
-   * ```
-   */
-  public removeAllListeners(): void {
-    for (const emitter of this.eventEmitters) {
-      emitter.close();
-    }
-    this.eventEmitters.clear();
-    this.disconnectWebSocket();
-  }
-
-  /**
-   * Cleanup all async resources including WebSocket and CloudWatch.
-   */
-  async cleanup(): Promise<void> {
-    for (const emitter of this.eventEmitters) {
-      emitter.close();
-    }
-    this.eventEmitters.clear();
-    this.disconnectWebSocket();
-    await this.logger.destroy();
-  }
-
-  private async executeWithErrorHandling<T>(fn: () => Promise<T>, fallbackMessage: string): Promise<T> {
-    try {
-      return await fn();
-    } catch (error: unknown) {
-      this.logger.error(fallbackMessage, error);
-      throw toAxionveraError(error, fallbackMessage);
-    }
-  }
-
-  private applyFeeBuffer(tx: Transaction): Transaction {
-    const sorobanData = tx.toEnvelope().v1().tx().ext().value();
-    if (!sorobanData) {
-      return tx;
-    }
-
-    const resources = sorobanData.resources();
-    const simulatedResourceFee = sorobanData.resourceFee().toBigInt();
-    const simulatedTotalFee = BigInt(tx.fee);
-    const simulatedBaseFee = simulatedTotalFee > simulatedResourceFee
-      ? simulatedTotalFee - simulatedResourceFee
-      : BigInt(0);
-
-    const bufferedResourceFee = multiplyAndCeil(simulatedResourceFee, this.feeBufferMultiplier);
-    const bufferedBaseFee = multiplyAndCeil(simulatedBaseFee, this.feeBufferMultiplier);
-    const bufferedTotalFee = bufferedBaseFee + bufferedResourceFee;
-
-    if (this.maxFeeLimit !== undefined) {
-      if (this.maxFeeLimit < simulatedTotalFee) {
-        throw new ValidationError(
-          `maxFeeLimit (${this.maxFeeLimit.toString()}) is below the simulated minimum fee (${simulatedTotalFee.toString()})`
-        );
-      }
-
-      if (bufferedTotalFee > this.maxFeeLimit) {
-        throw new ValidationError(
-          `Buffered fee (${bufferedTotalFee.toString()}) exceeds maxFeeLimit (${this.maxFeeLimit.toString()})`
-        );
-      }
-    }
-
-    const bufferedSorobanData = new SorobanDataBuilder(sorobanData)
-      .setResources(
-        multiplyAndCeil(resources.instructions(), this.feeBufferMultiplier),
-        multiplyAndCeil(resources.diskReadBytes(), this.feeBufferMultiplier),
-        multiplyAndCeil(resources.writeBytes(), this.feeBufferMultiplier)
-      )
-      .setResourceFee(bufferedResourceFee.toString())
-      .build();
-
-    return TransactionBuilder.cloneFrom(tx, {
-      fee: bufferedBaseFee.toString(),
-      networkPassphrase: tx.networkPassphrase,
-      sorobanData: bufferedSorobanData
-    }).build();
-  }
-}
-
-/**
- * Extracts cursor parameter from a URL.
- * @param url - The URL to extract cursor from
- * @returns The cursor value or undefined
- */
-function extractCursor(url: string): string | undefined {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.searchParams.get('cursor') ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function multiplyAndCeil(value: number | bigint | string, multiplier: number): bigint {
-  const scaledValue = typeof value === "bigint" ? value : BigInt(String(value));
-  if (scaledValue < BigInt(0)) {
-    throw new ValidationError("Cannot buffer a non-finite or negative resource value");
-  }
-
-  const { numerator, denominator } = toFraction(multiplier);
-  return (scaledValue * numerator + (denominator - BigInt(1))) / denominator;
-}
-
-function toFraction(multiplier: number): { numerator: bigint; denominator: bigint } {
-  if (!Number.isFinite(multiplier) || multiplier < 0) {
-    throw new ValidationError("feeBufferMultiplier must be a finite number greater than or equal to 0");
-  }
-
-  const decimalString = multiplier.toString().includes("e")
-    ? multiplier.toFixed(12).replace(/0+$/, "").replace(/\.$/, "")
-    : multiplier.toString();
-  const [wholePart, fractionalPart = ""] = decimalString.split(".");
-
-  if (!/^\d+$/.test(wholePart) || !/^\d*$/.test(fractionalPart)) {
-    throw new ValidationError("feeBufferMultiplier must be a valid decimal number");
-  }
-
-  const denominator = BigInt(10) ** BigInt(fractionalPart.length);
-  const numerator = BigInt(`${wholePart}${fractionalPart}`);
-
-  return {
-    numerator,
-    denominator: denominator === BigInt(0) ? BigInt(1) : denominator
-  };
-}
-
-function validatePollingInterval(value: number, fieldName: string, allowZero: boolean): void {
-  const valid = Number.isFinite(value) && (allowZero ? value >= 0 : value > 0);
-  if (!valid) {
-    throw new ValidationError(`${fieldName} must be a finite ${allowZero ? "non-negative" : "positive"} number`);
-  }
-}
-
-function parseTransactionPollResult(response: unknown): TransactionPollResult {
-  const record = isRecord(response) ? response : {};
-  const status = typeof record.status === "string" ? record.status : "UNKNOWN";
-
-  return {
-    ...record,
-    status,
-    ledger: normalizeLedger(record.ledger)
-  };
-}
-
-function normalizeLedger(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function isRecord(value: unknown): value is TransactionResponseRecord {
-  return typeof value === "object" && value !== null;
 }
