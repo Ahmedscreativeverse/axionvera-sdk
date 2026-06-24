@@ -148,6 +148,18 @@ export { DefaultContractDiscoveryService, contractDiscovery, DefaultContractDesc
 export { CapabilityRegistry } from './registry';
 export type { ContractCapability, ContractDescriptor, ContractDiscoveryService, ContractMethodDescriptor, DiscoveryValidationResult } from './discovery';
 
+// Session
+export { ContractSession } from './session/contractSession';
+export { SessionManager } from './session/sessionManager';
+export type {
+    SessionStatus,
+    ContractContext,
+    RegisterContractParams,
+    SessionConfig,
+    SessionSnapshot,
+    SessionManagerConfig
+} from './session/types';
+
 // Wallet
 export { LocalKeypairWalletConnector } from './wallet/walletConnector';
 export { LocalKeypairWalletConnector, MockWalletConnector } from './wallet/walletConnector';
