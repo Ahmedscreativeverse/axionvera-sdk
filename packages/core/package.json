@@ -61,6 +61,16 @@
         "types": "./dist/wallet.d.ts",
         "default": "./dist/wallet.js"
       }
+    },
+    "./session": {
+      "import": {
+        "types": "./dist/session.d.mts",
+        "default": "./dist/session.mjs"
+      },
+      "require": {
+        "types": "./dist/session.d.ts",
+        "default": "./dist/session.js"
+      }
     }
   },
   "scripts": {

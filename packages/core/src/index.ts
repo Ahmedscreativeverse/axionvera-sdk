@@ -13,6 +13,18 @@ export { VaultABI } from './contracts/abis/VaultABI';
 export type { VaultConfig, DepositParams, WithdrawParams, VaultInfo } from './contracts/Vault';
 export type { ContractEvent, EventCallback } from './contracts/ContractEventEmitter';
 
+// Session
+export { ContractSession } from './session/contractSession';
+export { SessionManager } from './session/sessionManager';
+export type {
+  SessionStatus,
+  ContractContext,
+  RegisterContractParams,
+  SessionConfig,
+  SessionSnapshot,
+  SessionManagerConfig
+} from './session/types';
+
 // Wallet
 export { LocalKeypairWalletConnector } from './wallet/localKeypairWalletConnector';
 export { BrowserWalletConnector } from './wallet/browserWalletConnector';
