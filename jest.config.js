@@ -1,6 +1,10 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  // Use worker_threads (structuredClone) instead of child_process (JSON) so
+  // test results containing BigInt (Stellar sequence numbers) or circular
+  // socket objects don't crash the worker during IPC serialization.
+  workerThreads: true,
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }],
   },
