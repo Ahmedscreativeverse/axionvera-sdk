@@ -72,6 +72,16 @@
         "types": "./dist/contracts/BaseContract.d.ts",
         "default": "./dist/contracts/BaseContract.js"
       }
+    },
+    "./session": {
+      "import": {
+        "types": "./dist/session.d.mts",
+        "default": "./dist/session.mjs"
+      },
+      "require": {
+        "types": "./dist/session.d.ts",
+        "default": "./dist/session.js"
+      }
     }
   },
   "bin": {

@@ -27,8 +27,6 @@ export class CloudWatchLogger {
       logGroupName: config.logGroupName,
       logStreamName: config.logStreamName || `axionvera-sdk-${Date.now()}`,
       region: config.region || 'us-east-1',
-      accessKeyId: config.accessKeyId as string,
-      secretAccessKey: config.secretAccessKey as string,
       accessKeyId: config.accessKeyId || '',
       secretAccessKey: config.secretAccessKey || '',
       batchSize: config.batchSize || 100,

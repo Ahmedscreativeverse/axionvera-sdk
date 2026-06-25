@@ -8,7 +8,7 @@ export default defineConfig({
     monitoring: 'src/monitoring/index.ts',
     utils: 'src/utils/index.ts',
     wallet: 'src/wallet/index.ts',
-    codegen: 'src/codegen/index.ts',
+    session: 'src/session/index.ts',
   },
   format: ['cjs', 'esm'],
   dts: true,
