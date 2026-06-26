@@ -60,6 +60,18 @@ export type {
 } from './contracts/VaultContract';
 export type { ContractEvent, EventCallback } from './contracts/ContractEventEmitter';
 
+// Session
+export { ContractSession } from './session/contractSession';
+export { SessionManager } from './session/sessionManager';
+export type {
+  SessionStatus,
+  ContractContext,
+  RegisterContractParams,
+  SessionConfig,
+  SessionSnapshot,
+  SessionManagerConfig
+} from './session/types';
+
 // Wallet
 export { LocalKeypairWalletConnector } from './wallet/localKeypairWalletConnector';
 export { BrowserWalletConnector } from './wallet/browserWalletConnector';
@@ -98,6 +110,19 @@ export type {
   BuildAddressAuthEntryParams,
   BuildSourceAuthEntryParams,
 } from './utils/sorobanAuth';
+
+// Monitoring
+export { RpcHealthMonitor } from './monitoring';
+export type {
+  EndpointHealthState,
+  RpcEndpointConfig,
+  RpcEndpointMetrics,
+  RpcEndpointStatus,
+  RpcHealthCheckClient,
+  RpcHealthMonitorConfig,
+  RpcHealthResponse,
+  RpcHealthStatusReport
+} from './monitoring';
 
 // Errors
 export {

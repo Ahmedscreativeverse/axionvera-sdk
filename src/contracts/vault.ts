@@ -148,6 +148,22 @@ export class Vault {
    * @returns The contract transaction object
    * @throws ValidationError if no signer is available
    * @throws InsufficientFundsError if the user has insufficient vault shares
+   * @example
+   * ```typescript
+   * import { Vault } from "axionvera-sdk";
+   *
+   * const vault = new Vault({
+   *   contractAddress: "0x123...",
+   *   provider: signer
+   * });
+   *
+   * const tx = await vault.withdraw({
+   *   amount: 1000000000000000000n // 1 ETH in wei
+   * });
+   *
+   * await tx.wait();
+   * console.log("Withdrawal confirmed");*
+   * ```
    */
   async withdraw(params: WithdrawParams, signer?: ethers.Signer): Promise<ethers.ContractTransaction> {
     const signerToUse = signer || (this.provider as ethers.Signer);
@@ -160,6 +176,8 @@ export class Vault {
       const contractWithSigner = this.contract.connect(signerToUse);
       const tx = await (contractWithSigner as any).withdraw(
         params.amount,
+      const withdrawFunc = this.contract.getFunction('withdraw');
+      const tx = await withdrawFunc(params.amount,
         await signerToUse.getAddress(),
         await signerToUse.getAddress()
       );
@@ -202,6 +220,8 @@ export class Vault {
   async getPendingRewards(userAddress: string): Promise<bigint> {
     const result = await this.contract.pendingRewards(userAddress);
     return BigInt(result.toString());
+    const rewards = await this.contract.pendingRewards(userAddress);
+    return BigInt(rewards.toString());
   }
 
   /**
@@ -212,6 +232,9 @@ export class Vault {
   async estimateDepositGas(amount: bigint): Promise<bigint> {
     const result = await (this.contract.estimateGas as any).deposit(amount);
     return BigInt(result.toString());
+    const depositFunc = this.contract.getFunction('deposit');
+    const gas = await depositFunc.estimateGas(amount);
+    return BigInt(gas.toString());
   }
 
   /**
@@ -222,6 +245,9 @@ export class Vault {
   async estimateWithdrawGas(amount: bigint): Promise<bigint> {
     const result = await (this.contract.estimateGas as any).withdraw(amount);
     return BigInt(result.toString());
+    const withdrawFunc = this.contract.getFunction('withdraw');
+    const gas = await withdrawFunc.estimateGas(amount);
+    return BigInt(gas.toString());
   }
 }
 

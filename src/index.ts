@@ -148,6 +148,18 @@ export { DefaultContractDiscoveryService, contractDiscovery, DefaultContractDesc
 export { CapabilityRegistry } from './registry';
 export type { ContractCapability, ContractDescriptor, ContractDiscoveryService, ContractMethodDescriptor, DiscoveryValidationResult } from './discovery';
 
+// Session
+export { ContractSession } from './session/contractSession';
+export { SessionManager } from './session/sessionManager';
+export type {
+    SessionStatus,
+    ContractContext,
+    RegisterContractParams,
+    SessionConfig,
+    SessionSnapshot,
+    SessionManagerConfig
+} from './session/types';
+
 // Wallet
 export { LocalKeypairWalletConnector } from './wallet/walletConnector';
 export { LocalKeypairWalletConnector, MockWalletConnector } from './wallet/walletConnector';
@@ -193,6 +205,18 @@ export { parseEvents, decodeSorobanSymbol } from './utils/soroban';
 export type { ParsedEvent, ParseEventsOptions, DecodedTopic } from './utils/soroban';
 export { isValidXDR, assertValidXDR, MAX_XDR_STRING_LENGTH } from './utils/xdrValidator';
 
+// Monitoring
+export { RpcHealthMonitor } from './monitoring';
+export type {
+  EndpointHealthState,
+  RpcEndpointConfig,
+  RpcEndpointMetrics,
+  RpcEndpointStatus,
+  RpcHealthCheckClient,
+  RpcHealthMonitorConfig,
+  RpcHealthResponse,
+  RpcHealthStatusReport,
+} from './monitoring';
 
 // Profiling
 export { ProfilingService, profilingService } from './profiling';
