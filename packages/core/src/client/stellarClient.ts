@@ -7,7 +7,6 @@ import {
   nativeToScVal,
   scValToNative,
   rpc,
-  scValToNative,
   SorobanDataBuilder,
   Transaction,
   TransactionBuilder,
@@ -21,7 +20,7 @@ import {
 } from "../utils/networkConfig";
 import { ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG, createConcurrencyControlledClient } from "../utils/concurrencyQueue";
 import { RetryConfig, createHttpClientWithRetry, retry } from "../utils/httpInterceptor";
-import { NetworkError, toAxionveraError, InsecureNetworkError, AxionveraError } from "../errors/axionveraError";
+import { NetworkError, toAxionveraError, InsecureNetworkError, AxionveraError, TransactionTimeoutError, ValidationError } from "../errors/axionveraError";
 import {
   validateRpcResponse,
   GetHealthResponseSchema,
@@ -30,7 +29,6 @@ import {
   ValidatedGetHealthResponse,
   ValidatedGetTransactionResponse,
 } from "../utils/rpcSchemas";
-import { NetworkError, toAxionveraError, InsecureNetworkError, AxionveraError, TransactionTimeoutError, ValidationError } from "../errors/axionveraError";
 import { LogLevel, Logger } from "../utils/logger";
 import { WebSocketManager, EventFilter, SorobanEvent, WebSocketConfig } from "./websocket";
 import { CloudWatchConfig } from "../utils/logging/cloudwatch";
@@ -105,6 +103,8 @@ export type ContractEventResult = Omit<rpc.Api.EventResponse, "topic" | "value">
 export type GetContractEventsResult = {
   events: ContractEventResult[];
   pagingToken?: string;
+};
+
 /** Snapshot version for forward-compatibility of (de)serialized state. */
 export const HYDRATION_STATE_VERSION = 1 as const;
 
@@ -1244,92 +1244,8 @@ this.accountFetchTimeoutMs = options?.accountFetchTimeoutMs ?? 2000;
       restored.push(tracked);
     }
     return restored;
-  ): Promise<TransactionPollResult> {
-    return this.executeWithErrorHandling(async () => {
-      const timeoutMs = params?.timeoutMs ?? 30_000;
-      const intervalMs = params?.intervalMs ?? 1_000;
-      const onProgress = params?.onProgress;
-
-      validatePollingInterval(timeoutMs, "timeoutMs", true);
-      validatePollingInterval(intervalMs, "intervalMs", false);
-
-      return await new Promise<TransactionPollResult>((resolve, reject) => {
-        let settled = false;
-        let pollTimer: ReturnType<typeof setTimeout> | undefined;
-
-        const clearTimers = () => {
-          clearTimeout(timeoutTimer);
-          if (pollTimer) {
-            clearTimeout(pollTimer);
-          }
-        };
-
-        const settle = (callback: () => void) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          clearTimers();
-          callback();
-        };
-
-        const scheduleNextPoll = () => {
-          if (settled) {
-            return;
-          }
-
-          pollTimer = setTimeout(() => {
-            void pollOnce();
-          }, intervalMs);
-        };
-
-        const timeoutTimer = setTimeout(() => {
-          settle(() => {
-            reject(
-              new TransactionTimeoutError(
-                `Timed out waiting for transaction ${hash} after ${timeoutMs}ms`
-              )
-            );
-          });
-        }, timeoutMs);
-
-        const pollOnce = async () => {
-          try {
-            const res = await this.getTransaction(hash);
-            if (settled) {
-              return;
-            }
-
-            const parsed = parseTransactionPollResult(res);
-
-            if (onProgress) {
-              Promise.resolve()
-                .then(() => onProgress(parsed.status, parsed.ledger ?? 0))
-                .catch((err) => {
-                  this.logger.warn("onProgress callback error", err);
-                });
-            }
-
-            if (parsed.status === "SUCCESS" || parsed.status === "FAILED") {
-              settle(() => resolve(parsed));
-              return;
-            }
-
-            scheduleNextPoll();
-          } catch (error) {
-            if (settled) {
-              return;
-            }
-
-            settle(() => reject(error));
-          }
-        };
-
-        void pollOnce();
-      });
-    }, `Failed while polling transaction ${hash}`);
   }
+
 
   /**
    * Waits for a transaction to be confirmed or rejected with a Promise-based API.

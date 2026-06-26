@@ -55,7 +55,7 @@ async function loadFreighter(): Promise<FreighterApi> {
     !provider ||
     typeof (provider as any).getPublicKey !== 'function' ||
     typeof (provider as any).signTransaction !== 'function' ||
-    typeof (provider as any).getNetwork !== 'function'
+    typeof (provider as any).getNetwork !== 'function' ||
     typeof (provider as Record<string, unknown>).getPublicKey !== 'function' ||
     typeof (provider as Record<string, unknown>).signTransaction !== 'function'
   ) {
