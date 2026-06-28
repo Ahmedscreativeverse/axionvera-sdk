@@ -21,12 +21,18 @@ export type AxionveraErrorOptions = {
   statusCode?: number;
   requestId?: string;
   originalError?: unknown;
+  /** Standardized error code from ErrorCodes registry */
+  code?: number;
+  /** Error category for classification (retryable, clientError, etc.) */
+  category?: string;
 };
 
 export class AxionveraError extends Error {
   readonly statusCode?: number;
   readonly requestId?: string;
   readonly originalError?: unknown;
+  readonly code?: number;
+  readonly category?: string;
 
   constructor(message: string, options: AxionveraErrorOptions = {}) {
     super(message);
@@ -34,6 +40,8 @@ export class AxionveraError extends Error {
     this.statusCode = options.statusCode;
     this.requestId = options.requestId;
     this.originalError = options.originalError;
+    this.code = options.code;
+    this.category = options.category;
   }
 }
 

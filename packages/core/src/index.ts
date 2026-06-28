@@ -7,9 +7,6 @@ export type {
   GetContractEventsOptions,
   GetContractEventsResult,
   ContractEventResult,
-} from './client/stellarClient';
-export type {
-  StellarClientOptions,
   PendingTransaction,
   TrackedTransaction,
   SerializedPendingTransaction,
@@ -143,10 +140,17 @@ export {
   DeviceLockedError,
   UserRejectedError,
   ContractRevertError,
-  TransactionTimeoutError,
   toAxionveraError,
+  // New error utilities
+  ErrorCodes,
+  classifyError,
+  isRetryable,
+  shouldRetry,
 } from './errors/axionveraError';
 export type { RPCValidationMismatchErrorOptions } from './errors/axionveraError';
+
+// Error Middleware
+export { createErrorMiddleware } from './middleware/errorMiddleware';
 
 // RPC schema types
 export type {
