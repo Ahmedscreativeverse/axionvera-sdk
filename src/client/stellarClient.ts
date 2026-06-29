@@ -524,8 +524,13 @@ export class StellarClient {
       metricsCollector.increment('requests.errors', { operation: 'getHealth', network: this.network });
       telemetryService.track('request_error', { operation: 'getHealth', network: this.network, error: error instanceof Error ? error.message : String(error) });
       // Attach metadata to error when available
-      if (includeMeta && error instanceof AxionveraError) {
-        error.requestId = error.requestId ?? clientRequestId;
+      if (includeMeta && error instanceof AxionveraError && !error.requestId) {
+        // requestId is readonly on AxionveraError — wrap in a new error to attach it
+        throw new AxionveraRPCError(error.message, 'getHealth', {
+          originalError: error,
+          statusCode: error.statusCode,
+          requestId: clientRequestId,
+        });
       }
       if (error instanceof AxionveraError) throw error;
       throw new AxionveraRPCError(
@@ -565,9 +570,6 @@ export class StellarClient {
         network: this.network, clientRequestId,
       }));
     } catch (error) {
-      if (includeMeta && error instanceof AxionveraError) {
-        error.requestId = error.requestId ?? clientRequestId;
-      }
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getNetwork',
         'getNetwork',
@@ -605,9 +607,6 @@ export class StellarClient {
         network: this.network, clientRequestId,
       }));
     } catch (error) {
-      if (includeMeta && error instanceof AxionveraError) {
-        error.requestId = error.requestId ?? clientRequestId;
-      }
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getLatestLedger',
         'getLatestLedger',
@@ -644,9 +643,6 @@ export class StellarClient {
         network: this.network, clientRequestId,
       }));
     } catch (error) {
-      if (includeMeta && error instanceof AxionveraError) {
-        error.requestId = error.requestId ?? clientRequestId;
-      }
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getEvents',
         'getEvents',
@@ -1036,8 +1032,10 @@ export class StellarClient {
       const result = await this.executeWithMiddleware('transaction', 'simulateTransaction', { tx }, ({ tx }) => this.rpc.simulateTransaction(tx));
       validateRpcResponse(SimulateTransactionResponseSchema, result, 'simulateTransaction');
       if (rpc.Api.isSimulationError(result)) {
-        const simError = new SimulationFailedError(result.error, { simulationResult: result });
-        if (includeMeta) simError.requestId = clientRequestId;
+        const simError = new SimulationFailedError(result.error, {
+          simulationResult: result,
+          requestId: includeMeta ? clientRequestId : undefined,
+        });
         throw simError;
       }
       metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'success' });
@@ -1051,7 +1049,12 @@ export class StellarClient {
       metricsCollector.increment('transactions.simulate_errors', { network: this.network });
       telemetryService.track('transaction_simulate_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
       if (includeMeta && error instanceof AxionveraError && !error.requestId) {
-        error.requestId = clientRequestId;
+        // requestId is readonly — wrap in a new error to attach it
+        throw new SimulationFailedError(error.message, {
+          originalError: error,
+          simulationResult: (error as any).simulationResult,
+          requestId: clientRequestId,
+        });
       }
       if (error instanceof AxionveraError) throw error;
       throw new SimulationFailedError(
@@ -1211,15 +1214,12 @@ export class StellarClient {
           network: this.network, clientRequestId,
         }));
       } catch (error) {
-        if (includeMeta && error instanceof AxionveraError && !error.requestId) {
-          error.requestId = clientRequestId;
-        }
         throw toAxionveraError(error, "Failed to prepare transaction");
       }
     }
 
     try {
-      const simulation = await this.simulateTransaction(tx, { includeMeta: false });
+      const simulation = await this.simulateTransaction(tx, { includeMeta: false }) as rpc.Api.SimulateTransactionResponse;
       const assembledTx = rpc.assembleTransaction(tx, simulation).build();
       const result = await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx: assembledTx }, ({ tx }) => this.applyFeeBuffer(tx));
       return maybeWrap(includeMeta, result, buildResponseMetadata({
@@ -1228,7 +1228,6 @@ export class StellarClient {
       }));
     } catch (error) {
       if (error instanceof AxionveraError) {
-        if (includeMeta && !error.requestId) error.requestId = clientRequestId;
         throw error;
       }
 
@@ -1322,9 +1321,6 @@ export class StellarClient {
       metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'error' });
       metricsCollector.increment('transactions.send_errors', { network: this.network });
       telemetryService.track('transaction_send_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
-      if (includeMeta && error instanceof AxionveraError && !error.requestId) {
-        error.requestId = clientRequestId;
-      }
       throw normalizeTransactionError(error);
     }
   }
