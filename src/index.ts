@@ -22,6 +22,9 @@ export {
   SimulationFailedError,
   SlippageToleranceExceededError,
   WalletConnectionError,
+  BatchError,
+  BatchValidationError,
+  BatchExecutionError,
   toAxionveraError,
   normalizeRpcError,
   normalizeTransactionError,
@@ -305,6 +308,24 @@ export type {
 // Contract Schema Validation Framework
 export { SchemaValidationError } from './errors/axionveraError';
 export type { SchemaValidationErrorOptions } from './errors/axionveraError';
+
+// Batch Transaction System
+export {
+  BatchError,
+  BatchValidationError,
+  BatchExecutionError,
+} from './errors/axionveraError';
+export { BatchBuilder, BatchValidator, batchValidator, BatchExecutor } from './batch';
+export type { BatchRpcClient } from './batch';
+export type {
+  BatchConfig,
+  BatchDependency,
+  BatchResult,
+  BatchTransaction,
+  BatchTransactionResult,
+  BatchValidationIssue,
+  BatchValidationResult,
+} from './batch';
 export {
   ContractValidationEngine,
   defaultValidationEngine,
