@@ -284,7 +284,37 @@ export {
   getDefaultRpcUrl,
   getNetworkPassphrase,
   resolveNetworkConfig,
+  LOCAL_NETWORK_PASSPHRASE,
 } from './utils/networkConfig';
+export type { AxionveraNetwork, NetworkConfig } from './utils/networkConfig';
+
+// Network
+export { ReconnectionManager } from './network/reconnectionManager';
+export { RpcEndpointManager } from './network/rpcEndpointManager';
+export { EnvironmentManager } from './network/environmentManager';
+export {
+  ENVIRONMENT_PRESETS,
+  buildEnvironmentConfig,
+  getPresetEnvironments,
+  getPresetEnvironment,
+} from './network/environmentPresets';
+export type {
+  LoadBalancingPolicy,
+  EndpointEntry,
+  RpcEndpointManagerConfig,
+} from './network/rpcEndpointManager';
+
+// Environment types
+export type {
+  EnvironmentId,
+  EnvironmentTier,
+  EnvironmentConfig,
+  EnvironmentOptions,
+  EnvironmentSwitchResult,
+  EnvironmentChangeListener,
+  EnvironmentValidationResult,
+  EnvironmentValidationIssue,
+} from './types/environment';
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 export { getRequiredSigners } from './utils/getRequiredSigners';
 export { verifyWebhookSignature } from './utils/webhooks';
