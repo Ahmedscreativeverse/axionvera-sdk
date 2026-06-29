@@ -22,6 +22,9 @@ export {
   SimulationFailedError,
   SlippageToleranceExceededError,
   WalletConnectionError,
+  BatchError,
+  BatchValidationError,
+  BatchExecutionError,
   toAxionveraError,
   normalizeRpcError,
   normalizeTransactionError,
@@ -58,6 +61,9 @@ export {
   TraceSpan,
 } from './observability/types';
 export { DiagnosticsManager } from './diagnostics';
+
+// Retry engine (transport-agnostic, pluggable policies + backoff + classification)
+export * from './retry';
 
 // Plugin System
 export {
@@ -278,7 +284,37 @@ export {
   getDefaultRpcUrl,
   getNetworkPassphrase,
   resolveNetworkConfig,
+  LOCAL_NETWORK_PASSPHRASE,
 } from './utils/networkConfig';
+export type { AxionveraNetwork, NetworkConfig } from './utils/networkConfig';
+
+// Network
+export { ReconnectionManager } from './network/reconnectionManager';
+export { RpcEndpointManager } from './network/rpcEndpointManager';
+export { EnvironmentManager } from './network/environmentManager';
+export {
+  ENVIRONMENT_PRESETS,
+  buildEnvironmentConfig,
+  getPresetEnvironments,
+  getPresetEnvironment,
+} from './network/environmentPresets';
+export type {
+  LoadBalancingPolicy,
+  EndpointEntry,
+  RpcEndpointManagerConfig,
+} from './network/rpcEndpointManager';
+
+// Environment types
+export type {
+  EnvironmentId,
+  EnvironmentTier,
+  EnvironmentConfig,
+  EnvironmentOptions,
+  EnvironmentSwitchResult,
+  EnvironmentChangeListener,
+  EnvironmentValidationResult,
+  EnvironmentValidationIssue,
+} from './types/environment';
 export { generateTransactionURI, generatePayURI } from './utils/sep7';
 export { getRequiredSigners } from './utils/getRequiredSigners';
 export { verifyWebhookSignature } from './utils/webhooks';
@@ -375,6 +411,24 @@ export {
 // Contract Schema Validation Framework
 export { SchemaValidationError } from './errors/axionveraError';
 export type { SchemaValidationErrorOptions } from './errors/axionveraError';
+
+// Batch Transaction System
+export {
+  BatchError,
+  BatchValidationError,
+  BatchExecutionError,
+} from './errors/axionveraError';
+export { BatchBuilder, BatchValidator, batchValidator, BatchExecutor } from './batch';
+export type { BatchRpcClient } from './batch';
+export type {
+  BatchConfig,
+  BatchDependency,
+  BatchResult,
+  BatchTransaction,
+  BatchTransactionResult,
+  BatchValidationIssue,
+  BatchValidationResult,
+} from './batch';
 export {
   ContractValidationEngine,
   defaultValidationEngine,

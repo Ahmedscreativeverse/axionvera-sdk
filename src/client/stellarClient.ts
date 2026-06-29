@@ -13,6 +13,8 @@ import {
 } from "@stellar/stellar-sdk";
 
 import { AxionveraNetwork, resolveNetworkConfig } from "../utils/networkConfig";
+import { EnvironmentManager } from "../network/environmentManager";
+import type { EnvironmentConfig, EnvironmentSwitchResult } from "../types/environment";
 import { ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG } from "../utils/concurrencyQueue";
 import { RetryConfig, retry } from "../utils/httpInterceptor";
 import { normalizeRpcError, normalizeTransactionError, TimeoutError, TransactionTimeoutError, InsecureNetworkError, AxionveraError, AxionveraRPCError, SimulationFailedError, InvalidXDRError, ValidationError, toAxionveraError } from "../errors/axionveraError";
@@ -86,13 +88,11 @@ export type StellarClientOptions = {
   /** Whether to use the plugin manager (default: true) */
   usePluginManager?: boolean;
   /**
-   * When `true`, service methods return `{ data, meta }` instead of the
-   * raw response body.  Can be overridden per-call via the `includeMeta`
-   * property on individual method options.
-   *
-   * @default false
+   * Environment manager for multi-environment support.
+   * When provided and has an active environment, its config takes precedence
+   * over `network` / `rpcUrl` / `networkPassphrase` options.
    */
-  includeMeta?: boolean;
+  environmentManager?: EnvironmentManager;
 };
 
 export type TransactionSendResult = {
@@ -253,13 +253,13 @@ export type TransactionPollResult = TransactionResponseRecord & {
  */
 export class StellarClient {
   /** The network this client is connected to. */
-  readonly network: AxionveraNetwork;
+  network: AxionveraNetwork;
   /** The RPC URL this client uses. */
-  readonly rpcUrl: string;
+  rpcUrl: string;
   /** The network passphrase for transaction signing. */
-  readonly networkPassphrase: string;
+  networkPassphrase: string;
   /** The underlying RPC server instance. */
-  readonly rpc: rpc.Server;
+  rpc: rpc.Server;
   /** The HTTP client with retry interceptors. */
   readonly httpClient;
   /** The effective retry configuration after merging with defaults. */
@@ -297,6 +297,10 @@ export class StellarClient {
   readonly feeBufferMultiplier: number;
   /** Optional hard ceiling for the total prepared fee. */
   readonly maxFeeLimit?: bigint;
+  /** The environment manager, if one was provided or created. */
+  readonly environmentManager?: EnvironmentManager;
+  /** Unsubscribe function for environment change events. */
+  private envUnsubscribe?: () => void;
 
   /**
    * Creates a new StellarClient instance for interacting with Soroban RPC.
@@ -336,10 +340,29 @@ export class StellarClient {
       processedOptions = this.applySyncPluginHooks(processedOptions, pluginManager);
     }
 
-    const config = resolveNetworkConfig(processedOptions);
+    // Resolve environment: use EnvironmentManager's active config if available,
+    // otherwise fall back to the legacy network config resolution.
+    this.environmentManager = processedOptions.environmentManager;
+    const activeEnv = this.environmentManager?.getActive();
+
+    const config = activeEnv
+      ? {
+          network: activeEnv.network,
+          rpcUrl: activeEnv.rpcUrl,
+          networkPassphrase: activeEnv.networkPassphrase,
+        }
+      : resolveNetworkConfig(processedOptions);
+
     this.network = config.network;
     this.rpcUrl = config.rpcUrl;
     this.networkPassphrase = config.networkPassphrase;
+
+    // Subscribe to environment changes for runtime switching
+    if (this.environmentManager) {
+      this.envUnsubscribe = this.environmentManager.onChange((result) => {
+        this.applyEnvironmentConfig(result.config);
+      });
+    }
 
     // Validate RPC URL has a protocol
     if (!this.rpcUrl.startsWith('http://') && !this.rpcUrl.startsWith('https://')) {
@@ -450,6 +473,73 @@ export class StellarClient {
     }
 
     return processedOptions;
+  }
+
+  // ── Environment Management ──────────────────────────────────────
+
+  /**
+   * Applies an environment configuration to this client, updating
+   * the RPC endpoint, network passphrase, and recreating the RPC server.
+   * @param config - The environment configuration to apply.
+   */
+  private applyEnvironmentConfig(config: EnvironmentConfig): void {
+    this.network = config.network;
+    this.rpcUrl = config.rpcUrl;
+    this.networkPassphrase = config.networkPassphrase;
+
+    // Recreate the RPC server with the new URL
+    this.rpc = new rpc.Server(config.rpcUrl, {
+      allowHttp: config.allowHttp ?? config.rpcUrl.startsWith('http://'),
+    });
+
+    this.logger?.info?.(
+      `Environment switched: network=${config.network}, rpcUrl=${config.rpcUrl}`,
+    );
+  }
+
+  /**
+   * Switches the client to a different registered environment.
+   * This delegates to the EnvironmentManager and reconfigures the client.
+   * @param environmentId - The id of the environment to switch to.
+   * @returns The switch result with previous and current environment info.
+   * @throws If no EnvironmentManager is configured on this client.
+   */
+  switchEnvironment(environmentId: string): EnvironmentSwitchResult {
+    if (!this.environmentManager) {
+      throw new AxionveraError(
+        'No EnvironmentManager is configured on this client. ' +
+        'Pass `environmentManager` in StellarClientOptions to enable environment switching.',
+      );
+    }
+
+    const result = this.environmentManager.switch(environmentId);
+    this.applyEnvironmentConfig(result.config);
+    return result;
+  }
+
+  /**
+   * Registers a new environment in the client's environment manager.
+   * @param options - Environment options to register.
+   * @returns The resolved environment configuration.
+   * @throws If no EnvironmentManager is configured on this client.
+   */
+  registerEnvironment(options: import('../types/environment').EnvironmentOptions): EnvironmentConfig {
+    if (!this.environmentManager) {
+      throw new AxionveraError(
+        'No EnvironmentManager is configured on this client. ' +
+        'Pass `environmentManager` in StellarClientOptions to enable environment registration.',
+      );
+    }
+    return this.environmentManager.register(options);
+  }
+
+  /**
+   * Cleans up the environment change listener.
+   * Call this when disposing the client to prevent memory leaks.
+   */
+  disposeEnvironmentListener(): void {
+    this.envUnsubscribe?.();
+    this.envUnsubscribe = undefined;
   }
 
 

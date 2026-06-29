@@ -3,11 +3,43 @@ import {
   Address,
   FeeBumpTransaction,
   Contract,
+  Memo,
   Transaction,
   TransactionBuilder,
   nativeToScVal,
   xdr,
 } from '@stellar/stellar-sdk';
+
+/**
+ * A typed transaction memo. Maps to the corresponding `Memo.*` constructor:
+ * - `text`   → `Memo.text` (UTF-8, ≤ 28 bytes)
+ * - `id`     → `Memo.id` (unsigned 64-bit integer, as a string)
+ * - `hash`   → `Memo.hash` (32-byte hex)
+ * - `return` → `Memo.return` (32-byte hex)
+ */
+export type TransactionMemo =
+  | { type: 'text'; value: string }
+  | { type: 'id'; value: string }
+  | { type: 'hash'; value: string }
+  | { type: 'return'; value: string };
+
+/** Converts a {@link TransactionMemo} into a stellar-sdk `Memo`. */
+export function toMemo(memo: TransactionMemo): Memo {
+  switch (memo.type) {
+    case 'text':
+      return Memo.text(memo.value);
+    case 'id':
+      return Memo.id(memo.value);
+    case 'hash':
+      return Memo.hash(memo.value);
+    case 'return':
+      return Memo.return(memo.value);
+    default: {
+      const _exhaustive: never = memo;
+      throw new Error(`Unsupported memo type: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
 
 /**
  * Supported argument types for contract calls.
@@ -32,6 +64,8 @@ export interface BuildContractCallParams {
   fee?: number;
   /** Transaction timeout in seconds (default: 60) */
   timeoutInSeconds?: number;
+  /** Optional transaction memo. */
+  memo?: TransactionMemo;
 }
 
 /**
@@ -104,13 +138,18 @@ export function buildContractCallTransaction(params: BuildContractCallParams): T
   const fee = (params.fee ?? 100_000).toString();
   const timeoutInSeconds = params.timeoutInSeconds ?? 60;
 
-  return new TransactionBuilder(params.sourceAccount, {
+  const builder = new TransactionBuilder(params.sourceAccount, {
     fee,
     networkPassphrase: params.networkPassphrase,
   })
     .addOperation(operation)
-    .setTimeout(timeoutInSeconds)
-    .build();
+    .setTimeout(timeoutInSeconds);
+
+  if (params.memo) {
+    builder.addMemo(toMemo(params.memo));
+  }
+
+  return builder.build();
 }
 
 /**
@@ -193,6 +232,7 @@ export class ContractCallBuilder {
   private _args: ContractCallArg[] = [];
   private _fee?: number;
   private _timeoutInSeconds?: number;
+  private _memo?: TransactionMemo;
 
   /** Sets the contract ID to call. */
   setContract(contractId: string): this {
@@ -230,6 +270,12 @@ export class ContractCallBuilder {
     return this;
   }
 
+  /** Attaches a typed memo to the transaction. */
+  setMemo(memo: TransactionMemo): this {
+    this._memo = memo;
+    return this;
+  }
+
   /**
    * Builds the transaction.
    * @param sourceAccount - The source account for the transaction
@@ -249,6 +295,7 @@ export class ContractCallBuilder {
       args: this._args,
       fee: this._fee,
       timeoutInSeconds: this._timeoutInSeconds,
+      memo: this._memo,
     });
   }
 
