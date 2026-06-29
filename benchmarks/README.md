@@ -1,52 +1,205 @@
-# Performance Benchmarks
+# ⚡ Performance Benchmarks
 
-This directory contains automated performance benchmarks for the Axionvera SDK, specifically focused on XDR parsing performance.
+Comprehensive benchmarking framework for the Axionvera SDK that measures performance across core SDK operations, generates reports, and detects regressions.
 
 ## Purpose
 
-The benchmarks are designed to guarantee that new features added to the SDK don't accidentally slow down transaction parsing, which would cause UI stuttering in applications using the SDK.
+The benchmarking framework helps maintainers:
 
-## Benchmarks
+- **Identify regressions** — catch performance drops before they ship
+- **Compare optimizations** — measure the real impact of code changes
+- **Establish baselines** — set measurable performance targets
+- **Generate reports** — produce human-readable and machine-parsable output
 
-### XDR Parsing Benchmarks
+## Benchmark Suites
 
-The main benchmark script (`xdr-parsing.benchmark.js`) tests the following operations:
+### 1. 🔗 Contract Interactions (`contract-interactions.bench.ts`)
 
-1. **Transaction.fromXDR()** - Parsing complex Soroban transactions from XDR
-2. **XDR toBase64()** - Converting XDR to base64 strings
-3. **Transaction.hash()** - Calculating transaction hashes
-4. **Full Parse + Hash + Serialize Cycle** - Complete transaction processing
-5. **Bulk Parse 100 Transactions** - Parsing multiple transactions in batch
+Measures performance of:
+- Contract call parameter encoding (simple & complex)
+- Method signature resolution
+- Batch contract call preparation (10, 100 calls)
+- Contract ID validation
+- Full call preparation cycle (encode + resolve + assemble)
 
-### Test Data
+### 2. 📦 Serialization & Encoding (`serialization.bench.ts`)
 
-The benchmarks generate 1,000 complex Soroban transactions with:
-- Multiple contract call operations
-- Complex arguments (maps, vectors, addresses, numbers)
-- Varying fees and timeouts
-- Memos and metadata
+Measures performance of:
+- JSON serialization / deserialization (simple & complex transactions)
+- Base64 encoding / decoding (4KB buffers)
+- XDR format validation (regex)
+- Buffer allocation and copy (64KB)
+- XDR length validation
+- Full serialization round-trip (JSON → Buffer → Base64 → decode → parse)
 
-## Running Benchmarks
+### 3. 💳 Transaction Creation (`transaction-creation.bench.ts`)
 
-### Local Development
+Measures performance of:
+- Transaction building (1, 5, 20 operations)
+- Fee calculation
+- Resource cost estimation (CPU, RAM, stroops)
+- Fee buffer application
+- Account ID validation
+- Transaction hash generation
+- Full transaction creation pipeline
+
+### 4. 🌐 Network Communication (`network-communication.bench.ts`)
+
+Measures performance of:
+- RPC response validation
+- Transaction status parsing
+- Concurrency queue enqueue/dequeue
+- Retry backoff calculation
+- Response field extraction
+- Batch RPC response processing
+- RPC URL validation
+- Timeout calculation
+
+### 🔧 Legacy: XDR Parsing (`xdr-parsing.benchmark.js`)
+
+The original XDR parsing benchmark using the `benchmark` npm package. Still available via `npm run benchmark:legacy`.
+
+## Quick Start
 
 ```bash
-# Install dependencies
+# Navigate to the benchmarks directory
 cd benchmarks
+
+# Install dependencies
 npm install
 
-# Run benchmarks
+# Run all benchmarks
 npm run benchmark
 
-# Run benchmarks in CI mode (outputs machine-readable results)
+# Run a specific category
+npm run benchmark:contract
+npm run benchmark:serialization
+npm run benchmark:transaction
+npm run benchmark:network
+
+# Run in CI mode (JSON output + machine-readable summary)
 npm run benchmark:ci
+
+# Generate HTML report with charts
+npm run benchmark:html
+
+# Save current results as the performance baseline
+npm run benchmark:save-baseline
 ```
 
-### CI/CD Integration
+## CLI Flags
 
-The benchmarks automatically run on GitHub Actions for:
-- Pull requests to main/develop branches
-- Pushes to main/develop branches
+| Flag | Description |
+|------|-------------|
+| `--ci` | Machine-readable output for CI systems |
+| `--json` | Save JSON report to `reports/` |
+| `--html` | Save HTML report with charts to `reports/` |
+| `--save-baseline` | Save results as baseline for future comparison |
+| `--category=<name>` | Run only a specific suite (`contract`, `serialization`, `transaction`, `network`) |
+
+## Output Formats
+
+### Console Report
+Formatted tables with pass/fail indicators, ops/sec, and statistical margins.
+
+### JSON Report (`reports/benchmark-report-*.json`)
+Structured data suitable for programmatic consumption, dashboards, or time-series databases.
+
+### HTML Report (`reports/benchmark-report-*.html`)
+Self-contained page with Chart.js bar charts showing ops/sec across all benchmarks, color-coded by performance tier.
+
+## Historical Comparison
+
+The framework supports comparing current results against a stored baseline:
+
+1. **Save a baseline** on a known-good commit:
+   ```bash
+   npm run benchmark:save-baseline
+   ```
+
+2. **Run benchmarks** on a new commit. The report will automatically compare against `baselines/baseline.json` and highlight regressions (>10% drop) and improvements (>10% gain).
+
+3. **Baseline file**: `baselines/baseline.json` — commit this to your repository to share the baseline across the team.
+
+## Performance Thresholds
+
+Each benchmark has a default threshold (ops/sec). If performance drops below the threshold, the benchmark is marked as **failed** and the CI job will signal a regression.
+
+Thresholds can be customized per benchmark in the individual suite files.
+
+## CI/CD Integration
+
+Benchmarks run automatically on:
+- **Pull requests** to `main` — detects regressions before merge
+- **Pushes** to `main` — updates baseline awareness
+
+The CI job:
+1. Builds the SDK
+2. Runs the legacy XDR parsing benchmark
+3. Runs the comprehensive benchmark framework
+4. Uploads JSON and HTML reports as artifacts
+5. Fails the build if performance thresholds are exceeded
+
+### GitHub Actions Artifacts
+
+- `benchmark-json-report` — structured JSON data
+- `benchmark-html-report` — visual HTML report with charts
+
+## Methodology
+
+### Timing
+Uses `performance.now()` for high-resolution timing. Each benchmark runs a warm-up phase (5 iterations, not measured) followed by a measurement phase (minimum 50 iterations, maximum 5 seconds).
+
+### Statistics
+- **Ops/sec**: operations per second (higher is better)
+- **RME** (Relative Margin of Error): ± percentage; lower is more stable
+- **Mean, StdDev, Min, Max**: all in milliseconds
+
+### Isolation
+All benchmarks use simulated data to avoid external dependencies (no RPC calls, no ledger queries). This ensures reproducible results across environments.
+
+## Adding New Benchmarks
+
+1. Create a new file: `benchmarks/my-feature.bench.ts`
+2. Export an async function that accepts a `BenchmarkRunner`:
+   ```typescript
+   import { BenchmarkRunner, BenchmarkResult } from './runner';
+
+   export async function runMyBenchmarks(runner: BenchmarkRunner): Promise<BenchmarkResult[]> {
+     const results: BenchmarkResult[] = [];
+     results.push(
+       await runner.runBenchmark('MyFeature: my operation', 'my-category', () => {
+         // code to benchmark
+       }, { threshold: 10000 })
+     );
+     return results;
+   }
+   ```
+3. Register it in `benchmarks/index.ts`:
+   ```typescript
+   import { runMyBenchmarks } from './my-feature.bench';
+   // Add to main() function
+   ```
+
+## Directory Structure
+
+```
+benchmarks/
+├── index.ts                          # Entry point & CLI orchestration
+├── runner.ts                         # Benchmark runner & statistics
+├── report-generator.ts               # Report generation (console, JSON, HTML)
+├── contract-interactions.bench.ts    # Contract interaction benchmarks
+├── serialization.bench.ts            # Serialization benchmarks
+├── transaction-creation.bench.ts     # Transaction creation benchmarks
+├── network-communication.bench.ts    # Network communication benchmarks
+├── xdr-parsing.benchmark.js          # Legacy XDR benchmark
+├── baselines/
+│   └── baseline.json                 # Historical performance baseline
+├── reports/                          # Generated reports (gitignored)
+├── package.json
+├── tsconfig.json
+└── README.md                         # This file
+```
 
 ## Performance Thresholds
 

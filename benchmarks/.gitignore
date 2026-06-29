@@ -1,0 +1,10 @@
+# Benchmark artifacts
+reports/
+baselines/*.json
+!baselines/.gitkeep
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
