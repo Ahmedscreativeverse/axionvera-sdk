@@ -33,7 +33,10 @@ export type ErrorDiscriminant =
   | 'WalletNotInstalledError'
   | 'FaucetRateLimitError'
   | 'NetworkMismatchError'
-  | 'InsecureNetworkError';
+  | 'InsecureNetworkError'
+  | 'BatchError'
+  | 'BatchValidationError'
+  | 'BatchExecutionError';
 
 export interface AxionveraErrorOptions {
   statusCode?: number;
@@ -255,6 +258,53 @@ export class MigrationPathNotFoundError extends AxionveraError {
     this.contractId = contractId;
     this.fromVersion = fromVersion;
     this.toVersion = toVersion;
+  }
+}
+
+// ── Batch Errors ──────────────────────────────────────────────────
+
+/**
+ * Base error class for all batch-related failures.
+ */
+export class BatchError extends AxionveraError {
+  constructor(message: string, options: AxionveraErrorOptions = {}) {
+    super(message, options);
+    this.name = 'BatchError';
+  }
+}
+
+/**
+ * Thrown when pre-execution batch validation fails.
+ * Carries the full {@link BatchValidationResult} so callers can render
+ * per-transaction diagnostics.
+ */
+export class BatchValidationError extends BatchError {
+  readonly validationResult: import('../batch/types').BatchValidationResult;
+
+  constructor(
+    validationResult: import('../batch/types').BatchValidationResult,
+    options: AxionveraErrorOptions = {}
+  ) {
+    const summary = validationResult.issues
+      .map((i) => `[${i.category}] ${i.message}`)
+      .join('; ');
+    super(`Batch validation failed: ${summary}`, options);
+    this.name = 'BatchValidationError';
+    this.validationResult = validationResult;
+  }
+}
+
+/**
+ * Thrown when batch execution encounters an unrecoverable error outside
+ * of individual transaction failures (e.g. RPC connection loss).
+ */
+export class BatchExecutionError extends BatchError {
+  readonly failedAt: number;
+
+  constructor(message: string, failedAt: number, options: AxionveraErrorOptions = {}) {
+    super(message, options);
+    this.name = 'BatchExecutionError';
+    this.failedAt = failedAt;
   }
 }
 
