@@ -141,6 +141,88 @@ Workflow:
 
 This keeps the original contract payload intact while letting enterprise apps react to volatile fee markets.
 
+## 8) Access response metadata for diagnostics
+
+When debugging issues or filing support tickets, you can opt into **response metadata**
+that includes request IDs, timing information, and correlation identifiers. This is an
+opt-in feature — the default API remains backwards-compatible and returns plain data.
+
+### Per-call opt-in
+
+Pass `includeMeta: true` to any service method:
+
+```ts
+import { StellarClient } from "axionvera-sdk";
+
+const client = new StellarClient({ network: "testnet" });
+
+// With metadata
+const { data, meta } = await client.getHealth({ includeMeta: true });
+
+console.log("Request ID:",    meta.clientRequestId);
+console.log("Server req ID:", meta.requestId);
+console.log("Duration:",      meta.durationMs, "ms");
+console.log("Status:",        meta.statusCode);
+console.log("Timestamp:",     meta.timestamp);
+```
+
+### Global default
+
+Set `includeMeta: true` on the client constructor to enable metadata for all calls:
+
+```ts
+const client = new StellarClient({
+  network: "testnet",
+  includeMeta: true,
+});
+
+// All calls now return { data, meta }
+const { data, meta } = await client.getHealth();
+```
+
+Per-call overrides take precedence:
+
+```ts
+// Disable metadata for a single call
+const health = await client.getHealth({ includeMeta: false });
+```
+
+### Metadata shape
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `clientRequestId` | `string` | Always-present unique ID (e.g. `axv-lzabc-3kf2x`) |
+| `requestId` | `string?` | Server-assigned ID from `X-Request-Id` header |
+| `correlationId` | `string?` | Correlation ID from `X-Correlation-Id` header |
+| `traceId` | `string?` | W3C trace context from `Traceparent` header |
+| `durationMs` | `number` | Wall-clock duration of the request |
+| `statusCode` | `number` | HTTP status code |
+| `timestamp` | `string` | ISO-8601 timestamp of request initiation |
+| `operation` | `string` | Logical operation name (e.g. `getHealth`) |
+| `network` | `string?` | Stellar network (e.g. `testnet`) |
+
+### Error paths
+
+When `includeMeta: true` is set and a call fails, the `requestId` field on the
+thrown `AxionveraError` is populated with the client-generated request ID. Use it
+to correlate client-side failures with backend logs and support tickets:
+
+```ts
+try {
+  await client.sendTransaction(tx, { includeMeta: true });
+} catch (error) {
+  if (error instanceof AxionveraError) {
+    console.error("Request ID for support:", error.requestId);
+  }
+}
+```
+
+### Security
+
+The metadata extractor **never** exposes sensitive headers such as
+`Authorization`, `X-Api-Key`, `Cookie`, or `Set-Cookie`. Only safe correlation
+and tracing headers are captured.
+
 ## TODO
 
 - Add CLI examples that compile to plain JS under `dist/`

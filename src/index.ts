@@ -358,6 +358,20 @@ export type {
   OfflineTransactionPackage,
 } from './transactions';
 
+// Response Metadata (opt-in diagnostic feature)
+export type {
+  ResponseMetadata,
+  WithMetadata,
+  ServiceMethodOptions,
+} from './types/common';
+export {
+  generateRequestId,
+  buildResponseMetadata,
+  buildErrorMetadata,
+  wrapWithMetadata,
+  maybeWrap,
+} from './http/responseMetadata';
+
 // Contract Schema Validation Framework
 export { SchemaValidationError } from './errors/axionveraError';
 export type { SchemaValidationErrorOptions } from './errors/axionveraError';
