@@ -11,24 +11,12 @@ import {
   Transaction,
   TransactionBuilder,
   xdr
-    Account,
-Address,
-Contract,
-FeeBumpTransaction,
-Keypair,
-nativeToScVal,
-scValToNative,
-rpc,
-SorobanDataBuilder,
-Transaction,
-TransactionBuilder,
-xdr
 } from "@stellar/stellar-sdk";
 
 import {
-AxionveraNetwork,
-getNetworkPassphrase,
-resolveNetworkConfig
+  AxionveraNetwork,
+  getNetworkPassphrase,
+  resolveNetworkConfig
 } from "../utils/networkConfig";
 import { ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG, createConcurrencyControlledClient } from "../utils/concurrencyQueue";
 import { RetryConfig, createHttpClientWithRetry, retry } from "../utils/httpInterceptor";
@@ -41,31 +29,15 @@ import {
   ValidatedGetHealthResponse,
   ValidatedGetTransactionResponse,
 } from "../utils/rpcSchemas";
-import {
-NetworkError,
-toAxionveraError,
-InsecureNetworkError,
-AxionveraError,
-TransactionTimeoutError,
-ValidationError
-} from "../errors/axionveraError";
 import { LogLevel, Logger } from "../utils/logger";
 import { WebSocketManager, EventFilter, SorobanEvent, WebSocketConfig } from "./websocket";
 import { CloudWatchConfig } from "../utils/logging/cloudwatch";
 import {
-validateRpcResponse,
-GetHealthResponseSchema,
-SimulateTransactionResponseSchema,
-GetTransactionResponseSchema,
-ValidatedGetHealthResponse,
-ValidatedGetTransactionResponse,
-} from "../utils/rpcSchemas";
-import {
-FetchTransactionHistoryOptions,
-TransactionHistoryResult,
-parseTransaction,
-sortByTimestamp,
-filterByActionType
+  FetchTransactionHistoryOptions,
+  TransactionHistoryResult,
+  parseTransaction,
+  sortByTimestamp,
+  filterByActionType
 } from "../utils/transactionHistory";
 import { parseSorobanEvent, ParsedSorobanEvent } from "../utils/sorobanEventParser";
 import {

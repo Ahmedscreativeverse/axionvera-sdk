@@ -60,6 +60,7 @@ export class StellarRpcResponseError extends AxionveraError {}
 export class StellarRpcTimeoutError extends AxionveraError {}
 
 export class InsecureNetworkError extends AxionveraError {}
+export class NetworkMismatchError extends AxionveraError {}
 export class TransactionTimeoutError extends StellarRpcTimeoutError {}
 
 export class WalletNotInstalledError extends AxionveraError {}
