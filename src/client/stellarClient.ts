@@ -38,6 +38,8 @@ import { metricsCollector } from "../metrics";
 import { MiddlewarePipeline, Middleware, MiddlewareRegistration } from "../middleware";
 import { ContractEventEmitter } from "../contracts/ContractEventEmitter";
 import { getPluginManager, PluginManager } from "../plugin";
+import type { WithMetadata, ServiceMethodOptions } from "../types/common";
+import { generateRequestId, buildResponseMetadata, maybeWrap } from "../http/responseMetadata";
 
 const DEFAULT_FEE_BUFFER_MULTIPLIER = 1.15;
 
@@ -106,6 +108,8 @@ export type GetContractEventsOptions = {
   cursor?: string;
   fetchAll?: boolean;
   startTime?: Date | string | number | "last24Hours";
+  /** When `true` the method returns `{ data, meta }` instead of the raw response. */
+  includeMeta?: boolean;
 };
 
 export type ContractEventResult = Omit<rpc.Api.EventResponse, "topic" | "value"> & {
@@ -274,6 +278,8 @@ export class StellarClient {
   readonly accountFetchTimeoutMs: number;
   /** TTL for cached account sequence in milliseconds. */
   readonly cacheTtlMs: number;
+  /** Default value for the `includeMeta` option on service methods. */
+  readonly includeMeta: boolean;
 
   /** Private cache for account sequences with timestamps. */
   private accountSequenceCache: Map<string, { sequence: bigint; timestamp: number }>;
@@ -399,6 +405,7 @@ export class StellarClient {
     this.logger = processedOptions?.logger ?? container.getLogger();
     this.accountFetchTimeoutMs = processedOptions?.accountFetchTimeoutMs ?? 2000;
     this.cacheTtlMs = processedOptions?.cacheTtlMs ?? 5000;
+    this.includeMeta = processedOptions?.includeMeta ?? false;
     this.accountSequenceCache = new Map();
     this.accountCache = new Map();
 
@@ -561,7 +568,10 @@ export class StellarClient {
 
   /**
    * Checks the health of the RPC server with automatic retry on failure.
-   * @returns The health check response containing status information
+   *
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The health check response containing status information, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient } from "axionvera-sdk";
@@ -569,33 +579,64 @@ export class StellarClient {
    * const client = new StellarClient({ network: "testnet" });
    * const health = await client.getHealth();
    * console.log("RPC Status:", health.status);
+   *
+   * // With metadata for support / debugging
+   * const { data, meta } = await client.getHealth({ includeMeta: true });
+   * console.log("Request ID:", meta.requestId);
+   * console.log("Duration:", meta.durationMs, "ms");
    * ```
    */
-  async getHealth(): Promise<ValidatedGetHealthResponse> {
+  async getHealth(
+    options?: ServiceMethodOptions,
+  ): Promise<ValidatedGetHealthResponse | WithMetadata<ValidatedGetHealthResponse>> {
     const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     metricsCollector.increment('requests.total', { operation: 'getHealth', network: this.network });
     try {
       const response = await this.executeWithMiddleware('request', 'getHealth', undefined, () => retry(() => this.rpc.getHealth(), this.retryConfig));
       const validated = validateRpcResponse(GetHealthResponseSchema, response, 'getHealth');
       metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'success' });
       telemetryService.track('request_success', { operation: 'getHealth', network: this.network, duration: Date.now() - start });
+      if (includeMeta) {
+        const meta = buildResponseMetadata({
+          startTime: start,
+          statusCode: 200,
+          operation: 'getHealth',
+          network: this.network,
+          clientRequestId,
+        });
+        return { data: validated, meta };
+      }
       return validated;
     } catch (error) {
       metricsCollector.observe('requests.duration', Date.now() - start, { operation: 'getHealth', network: this.network, status: 'error' });
       metricsCollector.increment('requests.errors', { operation: 'getHealth', network: this.network });
       telemetryService.track('request_error', { operation: 'getHealth', network: this.network, error: error instanceof Error ? error.message : String(error) });
+      // Attach metadata to error when available
+      if (includeMeta && error instanceof AxionveraError && !error.requestId) {
+        // requestId is readonly on AxionveraError — wrap in a new error to attach it
+        throw new AxionveraRPCError(error.message, 'getHealth', {
+          originalError: error,
+          statusCode: error.statusCode,
+          requestId: clientRequestId,
+        });
+      }
       if (error instanceof AxionveraError) throw error;
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getHealth',
         'getHealth',
-        { originalError: error }
+        { originalError: error, requestId: includeMeta ? clientRequestId : undefined },
       );
     }
   }
 
   /**
    * Retrieves network information including the network passphrase and friendbot URL.
-   * @returns The network information response
+   *
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The network information response, or `{ data, meta }` when
+   * `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient } from "axionvera-sdk";
@@ -606,21 +647,33 @@ export class StellarClient {
    * console.log("Friendbot URL:", network.friendbotUrl);
    * ```
    */
-  async getNetwork(): Promise<rpc.Api.GetNetworkResponse> {
+  async getNetwork(
+    options?: ServiceMethodOptions,
+  ): Promise<rpc.Api.GetNetworkResponse | WithMetadata<rpc.Api.GetNetworkResponse>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     try {
-      return await this.executeWithMiddleware('request', 'getNetwork', undefined, () => retry(() => this.rpc.getNetwork(), this.retryConfig));
+      const result = await this.executeWithMiddleware('request', 'getNetwork', undefined, () => retry(() => this.rpc.getNetwork(), this.retryConfig));
+      return maybeWrap(includeMeta, result, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'getNetwork',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getNetwork',
         'getNetwork',
-        { originalError: error }
+        { originalError: error, requestId: includeMeta ? clientRequestId : undefined },
       );
     }
   }
 
   /**
    * Retrieves information about the latest ledger on the network.
-   * @returns The latest ledger response containing sequence, timestamp, and protocol version
+   *
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The latest ledger response containing sequence, timestamp, and
+   * protocol version, or `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient } from "axionvera-sdk";
@@ -631,14 +684,23 @@ export class StellarClient {
    * console.log("Timestamp:", new Date(ledger.closedAt * 1000).toISOString());
    * ```
    */
-  async getLatestLedger(): Promise<rpc.Api.GetLatestLedgerResponse> {
+  async getLatestLedger(
+    options?: ServiceMethodOptions,
+  ): Promise<rpc.Api.GetLatestLedgerResponse | WithMetadata<rpc.Api.GetLatestLedgerResponse>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     try {
-      return await this.executeWithMiddleware('request', 'getLatestLedger', undefined, () => retry(() => this.rpc.getLatestLedger(), this.retryConfig));
+      const result = await this.executeWithMiddleware('request', 'getLatestLedger', undefined, () => retry(() => this.rpc.getLatestLedger(), this.retryConfig));
+      return maybeWrap(includeMeta, result, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'getLatestLedger',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getLatestLedger',
         'getLatestLedger',
-        { originalError: error }
+        { originalError: error, requestId: includeMeta ? clientRequestId : undefined },
       );
     }
   }
@@ -647,14 +709,17 @@ export class StellarClient {
     contractId: string,
     topicFilters?: string[][],
     options: GetContractEventsOptions = {}
-  ): Promise<GetContractEventsResult> {
+  ): Promise<GetContractEventsResult | WithMetadata<GetContractEventsResult>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options.includeMeta ?? this.includeMeta;
     try {
       const endLedger = await this.resolveEndLedger(options.endLedger);
       const startLedger = this.resolveStartLedger(options, endLedger);
       const normalizedStartLedger = Math.min(startLedger, endLedger);
       const normalizedEndLedger = Math.max(startLedger, endLedger);
 
-      return await this.fetchContractEventsRange({
+      const result = await this.fetchContractEventsRange({
         contractId,
         topicFilters,
         startLedger: normalizedStartLedger,
@@ -663,19 +728,26 @@ export class StellarClient {
         cursor: options.cursor,
         fetchAll: options.fetchAll ?? false
       });
+      return maybeWrap(includeMeta, result, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'getContractEvents',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       throw new AxionveraRPCError(
         error instanceof Error ? error.message : 'RPC operation failed: getEvents',
         'getEvents',
-        { originalError: error }
+        { originalError: error, requestId: includeMeta ? clientRequestId : undefined },
       );
     }
   }
 
   /**
    * Retrieves an account's information from the network with automatic retry on failure.
+   *
    * @param publicKey - The account's public key (G-prefixed string)
-   * @returns The account information including sequence number and balances
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The account information including sequence number and balances, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient } from "axionvera-sdk";
@@ -686,8 +758,18 @@ export class StellarClient {
    * console.log("Balance:", account.balance());
    * ```
    */
-  async getAccount(publicKey: string): Promise<Account> {
-    return this.executeWithMiddleware('request', 'getAccount', { publicKey }, ({ publicKey }) => retry(() => this.rpc.getAccount(publicKey), this.retryConfig));
+  async getAccount(
+    publicKey: string,
+    options?: ServiceMethodOptions,
+  ): Promise<Account | WithMetadata<Account>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
+    const result = await this.executeWithMiddleware('request', 'getAccount', { publicKey }, ({ publicKey }) => retry(() => this.rpc.getAccount(publicKey), this.retryConfig));
+    return maybeWrap(includeMeta, result, buildResponseMetadata({
+      startTime: start, statusCode: 200, operation: 'getAccount',
+      network: this.network, clientRequestId,
+    }));
   }
 
   /**
@@ -733,7 +815,7 @@ export class StellarClient {
    */
   private async getAccountWithTimeout(publicKey: string, timeoutMs: number): Promise<Account> {
     return Promise.race([
-      this.getAccount(publicKey),
+      this.getAccount(publicKey, { includeMeta: false }) as Promise<Account>,
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Account fetch timeout after ${timeoutMs}ms`)), timeoutMs)
       )
@@ -877,7 +959,7 @@ export class StellarClient {
     
     for (let i = 0; i < transactions.length; i++) {
       try {
-        const result = await this.sendTransaction(transactions[i]);
+        const result = await this.sendTransaction(transactions[i], { includeMeta: false }) as TransactionSendResult;
         results.push(result);
         
         if (options?.onProgress) {
@@ -954,7 +1036,7 @@ export class StellarClient {
     
     if (simulate) {
       try {
-        const simulation = await this.simulateTransaction(transaction);
+        const simulation = await this.simulateTransaction(transaction, { includeMeta: false }) as rpc.Api.SimulateTransactionResponse;
         
         if (rpc.Api.isSimulationSuccess(simulation)) {
           // Access the resource fee from simulation result
@@ -1001,8 +1083,11 @@ export class StellarClient {
 
   /**
    * Simulates a transaction without submitting it to test validity and estimate costs.
+   *
    * @param tx - The transaction to simulate (Transaction or FeeBumpTransaction)
-   * @returns The simulation result with resource costs and any diagnostic events
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The simulation result with resource costs and any diagnostic events, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @throws SimulationFailedError if the transaction would fail during execution
    * @example
    * ```typescript
@@ -1026,27 +1111,45 @@ export class StellarClient {
    * ```
    */
   async simulateTransaction(
-    tx: Transaction | FeeBumpTransaction
-  ): Promise<rpc.Api.SimulateTransactionResponse> {
+    tx: Transaction | FeeBumpTransaction,
+    options?: ServiceMethodOptions,
+  ): Promise<rpc.Api.SimulateTransactionResponse | WithMetadata<rpc.Api.SimulateTransactionResponse>> {
     const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     metricsCollector.increment('transactions.simulate', { network: this.network });
     try {
       const result = await this.executeWithMiddleware('transaction', 'simulateTransaction', { tx }, ({ tx }) => this.rpc.simulateTransaction(tx));
       validateRpcResponse(SimulateTransactionResponseSchema, result, 'simulateTransaction');
       if (rpc.Api.isSimulationError(result)) {
-        throw new SimulationFailedError(result.error, { simulationResult: result });
+        const simError = new SimulationFailedError(result.error, {
+          simulationResult: result,
+          requestId: includeMeta ? clientRequestId : undefined,
+        });
+        throw simError;
       }
       metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'success' });
       telemetryService.track('transaction_simulate_success', { network: this.network, duration: Date.now() - start });
-      return result;
+      return maybeWrap(includeMeta, result, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'simulateTransaction',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       metricsCollector.observe('transactions.simulate_duration', Date.now() - start, { network: this.network, status: 'error' });
       metricsCollector.increment('transactions.simulate_errors', { network: this.network });
       telemetryService.track('transaction_simulate_error', { network: this.network, error: error instanceof Error ? error.message : String(error) });
+      if (includeMeta && error instanceof AxionveraError && !error.requestId) {
+        // requestId is readonly — wrap in a new error to attach it
+        throw new SimulationFailedError(error.message, {
+          originalError: error,
+          simulationResult: (error as any).simulationResult,
+          requestId: clientRequestId,
+        });
+      }
       if (error instanceof AxionveraError) throw error;
       throw new SimulationFailedError(
         error instanceof Error ? error.message : 'Transaction simulation failed',
-        { originalError: error }
+        { originalError: error, requestId: includeMeta ? clientRequestId : undefined },
       );
     }
   }
@@ -1159,13 +1262,12 @@ export class StellarClient {
   }
 
   /**
-   * Prepares a transaction by fetching the current ledger sequence
-   * and setting the correct min sequence age.
-   * @param tx - The transaction to prepare
-   * @returns The prepared transaction
    * Prepares a transaction by fetching the current ledger sequence and setting the correct min sequence age.
+   *
    * @param tx - The transaction to prepare (Transaction or FeeBumpTransaction)
-   * @returns The prepared transaction with updated sequence and fee information
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The prepared transaction with updated sequence and fee information, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
@@ -1186,19 +1288,34 @@ export class StellarClient {
    * console.log("Prepared sequence:", preparedTx.sequence);
    * ```
    */
-  async prepareTransaction(tx: Transaction | FeeBumpTransaction): Promise<Transaction> {
+  async prepareTransaction(
+    tx: Transaction | FeeBumpTransaction,
+    options?: ServiceMethodOptions,
+  ): Promise<Transaction | WithMetadata<Transaction>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
+
     if (tx instanceof FeeBumpTransaction) {
       try {
-        return await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx }, ({ tx }) => this.rpc.prepareTransaction(tx));
+        const result = await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx }, ({ tx }) => this.rpc.prepareTransaction(tx));
+        return maybeWrap(includeMeta, result, buildResponseMetadata({
+          startTime: start, statusCode: 200, operation: 'prepareTransaction',
+          network: this.network, clientRequestId,
+        }));
       } catch (error) {
         throw toAxionveraError(error, "Failed to prepare transaction");
       }
     }
 
     try {
-      const simulation = await this.simulateTransaction(tx);
+      const simulation = await this.simulateTransaction(tx, { includeMeta: false }) as rpc.Api.SimulateTransactionResponse;
       const assembledTx = rpc.assembleTransaction(tx, simulation).build();
-      return await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx: assembledTx }, ({ tx }) => this.applyFeeBuffer(tx));
+      const result = await this.executeWithMiddleware('transaction', 'prepareTransaction', { tx: assembledTx }, ({ tx }) => this.applyFeeBuffer(tx));
+      return maybeWrap(includeMeta, result, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'prepareTransaction',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       if (error instanceof AxionveraError) {
         throw error;
@@ -1210,8 +1327,11 @@ export class StellarClient {
 
   /**
    * Submits a signed transaction to the network, optionally signing with a wallet connector if configured.
+   *
    * @param tx - The signed transaction to submit (Transaction or FeeBumpTransaction)
-   * @returns The submission result containing the transaction hash and status
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The submission result containing the transaction hash and status, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient, TransactionBuilder } from "axionvera-sdk";
@@ -1234,9 +1354,14 @@ export class StellarClient {
    * console.log("Status:", result.status);
    * ```
    */
-  async sendTransaction(tx: Transaction | FeeBumpTransaction): Promise<TransactionSendResult> {
+  async sendTransaction(
+    tx: Transaction | FeeBumpTransaction,
+    options?: ServiceMethodOptions,
+  ): Promise<TransactionSendResult | WithMetadata<TransactionSendResult>> {
     let finalTx: Transaction | FeeBumpTransaction = tx;
     const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     metricsCollector.increment('transactions.send', { network: this.network });
     try {
       // If a wallet is available, sign the transaction before submission
@@ -1266,7 +1391,7 @@ export class StellarClient {
               err instanceof Error ? err.message : String(err)
             }`,
             signedXdr,
-            { originalError: err },
+            { originalError: err, requestId: includeMeta ? clientRequestId : undefined },
           );
         }
       }
@@ -1277,7 +1402,11 @@ export class StellarClient {
       const status = (result as any).status ?? (result as any).statusText ?? "unknown";
       metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'success' });
       telemetryService.track('transaction_send_success', { network: this.network, duration: Date.now() - start, hash, status });
-      return { hash, status, raw: result };
+      const sendResult: TransactionSendResult = { hash, status, raw: result };
+      return maybeWrap(includeMeta, sendResult, buildResponseMetadata({
+        startTime: start, statusCode: 200, operation: 'sendTransaction',
+        network: this.network, clientRequestId,
+      }));
     } catch (error) {
       metricsCollector.observe('transactions.send_duration', Date.now() - start, { network: this.network, status: 'error' });
       metricsCollector.increment('transactions.send_errors', { network: this.network });
@@ -1289,8 +1418,11 @@ export class StellarClient {
 
   /**
    * Retrieves the status of a submitted transaction with automatic retry on failure.
+   *
    * @param hash - The transaction hash to query
-   * @returns The transaction status response containing current state and details
+   * @param options - Optional flags (e.g. `includeMeta: true` for diagnostics).
+   * @returns The transaction status response containing current state and details, or
+   * `{ data, meta }` when `includeMeta` is `true`.
    * @example
    * ```typescript
    * import { StellarClient } from "axionvera-sdk";
@@ -1300,9 +1432,19 @@ export class StellarClient {
    * console.log("Status:", txStatus.status);
    * ```
    */
-  async getTransaction(hash: string): Promise<ValidatedGetTransactionResponse> {
+  async getTransaction(
+    hash: string,
+    options?: ServiceMethodOptions,
+  ): Promise<ValidatedGetTransactionResponse | WithMetadata<ValidatedGetTransactionResponse>> {
+    const start = Date.now();
+    const clientRequestId = generateRequestId();
+    const includeMeta = options?.includeMeta ?? this.includeMeta;
     const response = await this.executeWithMiddleware('request', 'getTransaction', { hash }, ({ hash }) => retry(() => this.rpc.getTransaction(hash), this.retryConfig));
-    return validateRpcResponse(GetTransactionResponseSchema, response, 'getTransaction');
+    const validated = validateRpcResponse(GetTransactionResponseSchema, response, 'getTransaction');
+    return maybeWrap(includeMeta, validated, buildResponseMetadata({
+      startTime: start, statusCode: 200, operation: 'getTransaction',
+      network: this.network, clientRequestId,
+    }));
   }
 
   /**
@@ -1373,7 +1515,7 @@ export class StellarClient {
     tracked.promise = (async (): Promise<unknown> => {
       try {
         while (!cancelled && Date.now() < deadline.getTime()) {
-          const res = await this.getTransaction(options.hash);
+          const res = await this.getTransaction(options.hash, { includeMeta: false });
           const status = (res as { status?: string } | null | undefined)?.status;
           if (status && status !== "NOT_FOUND") {
             return res;
@@ -1750,7 +1892,7 @@ export class StellarClient {
       return Math.max(1, providedEndLedger);
     }
 
-    const latestLedger = await this.getLatestLedger();
+    const latestLedger = await this.getLatestLedger({ includeMeta: false }) as rpc.Api.GetLatestLedgerResponse;
     const sequence = Number((latestLedger as any).sequence);
     return Number.isFinite(sequence) && sequence > 0 ? sequence : 1;
   }
