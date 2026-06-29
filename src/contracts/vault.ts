@@ -173,9 +173,6 @@ export class Vault {
     }
 
     try {
-      const contractWithSigner = this.contract.connect(signerToUse);
-      const tx = await (contractWithSigner as any).withdraw(
-        params.amount,
       const withdrawFunc = this.contract.getFunction('withdraw');
       const tx = await withdrawFunc(params.amount,
         await signerToUse.getAddress(),
