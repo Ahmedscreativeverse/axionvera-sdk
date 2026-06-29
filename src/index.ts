@@ -97,6 +97,39 @@ export type {
   PluginHooks,
 } from './plugin';
 
+// Feature Flags
+export { FeatureFlagsService, BUILT_IN_FEATURE_FLAGS } from './features';
+export {
+  evaluateFeature,
+  createEvaluationContext,
+  isProductionSafe,
+  getStabilityLabel,
+  getDeprecationWarning,
+  filterByStability,
+} from './features';
+export {
+  PRODUCTION_POLICY,
+  STAGING_POLICY,
+  DEVELOPMENT_POLICY,
+  PERMISSIVE_POLICY,
+  resolvePolicyFromEnvironment,
+  mergePolicies,
+} from './features';
+export { FeatureStability } from './features';
+export type {
+  FeatureFlagDefinition,
+  FeatureFlagState,
+  FeaturePolicy,
+  FeatureFlagsConfig,
+  FeatureEvaluationContext,
+  FeatureFlagsSummary,
+} from './features';
+export {
+  DEFAULT_FEATURE_POLICY,
+  PERMISSIVE_FEATURE_POLICY,
+  DEFAULT_FEATURE_FLAGS_CONFIG,
+} from './features';
+
 // Dependency Injection
 export {
   ServiceContainer,
