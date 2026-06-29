@@ -1,3 +1,2 @@
-export { parseWasm } from './wasmParser';
-export { generateContractClass } from './generator';
-export type { ContractSpec, SpecFunction, SpecParam, SpecStruct, SpecEnum, SpecEnumCase, SpecStructField } from './wasmParser';
+// Backward-compat shim — implementation moved to @axionvera/codegen (issue #289).
+export * from '@axionvera/codegen';

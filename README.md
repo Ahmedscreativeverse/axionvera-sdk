@@ -79,6 +79,25 @@ yarn add axionvera-sdk @stellar/stellar-sdk
 pnpm add axionvera-sdk @stellar/stellar-sdk
 ```
 
+### Modular Packages
+
+The SDK is being split into independently installable packages so applications
+can pull in only what they need. The first extracted package is
+**`@axionvera/codegen`** (Soroban WASM spec parser + contract-client generator):
+
+```bash
+npm install @axionvera/codegen
+```
+
+```ts
+import { parseWasm, generateContractClass } from '@axionvera/codegen';
+```
+
+**No import changes required:** `@axionvera/core` continues to re-export these
+utilities through thin shims, so this extraction does not change any existing
+import paths. New code should prefer the dedicated package to keep bundles lean.
+See `packages/codegen/README.md` for details.
+
 ### TypeScript Configuration
 
 Ensure your `tsconfig.json` has `strict: true` for full type safety:
