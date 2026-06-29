@@ -169,6 +169,10 @@ export type {
   ReflectOptions,
 } from './reflection';
 
+// Capability detection
+export { CapabilityDetector, capabilityDetector } from './capabilities';
+export type { CapabilityDetectionResult, DetectedMethod, DetectOptions } from './capabilities';
+
 // Session
 export { ContractSession } from './session/contractSession';
 export { SessionManager } from './session/sessionManager';
