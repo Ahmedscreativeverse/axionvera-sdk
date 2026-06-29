@@ -14,5 +14,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   splitting: true,
-  external: ['@stellar/stellar-sdk', 'axios'],
+  external: ['@stellar/stellar-sdk', 'axios', '@axionvera/codegen'],
 });
