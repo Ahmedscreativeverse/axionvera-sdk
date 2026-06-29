@@ -60,13 +60,36 @@ export {
 export { DiagnosticsManager } from './diagnostics';
 
 // Plugin System
-export { PluginManager, getPluginManager, setPluginManager } from './plugin';
+export {
+  PluginManager,
+  getPluginManager,
+  setPluginManager,
+  PluginRegistry,
+  InvalidPluginTransitionError,
+  transitionState,
+  isValidTransition,
+  validatePlugin,
+  validateDependencies,
+  detectCircularDependencies,
+  topologicalSort,
+  parseSemVer,
+  compareSemVer,
+  satisfiesMinVersion,
+  PluginLifecycleState,
+} from './plugin';
 export type {
+  SemVer,
+  PluginCompatibility,
+  PluginDependency,
+  PluginValidationResult,
+  PluginManifest,
   PluginConfig,
   PluginInstance,
   PluginManagerConfig,
+  PluginRegistryEntry,
+  PluginFactory,
   PluginHooks,
-} from './plugin/types';
+} from './plugin';
 
 // Dependency Injection
 export {
