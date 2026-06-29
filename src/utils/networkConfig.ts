@@ -3,7 +3,12 @@ import { Networks } from "@stellar/stellar-sdk";
 /**
  * Supported Axionvera networks.
  */
-export type AxionveraNetwork = "testnet" | "mainnet" | "futurenet";
+export type AxionveraNetwork = "local" | "testnet" | "mainnet" | "futurenet";
+
+/**
+ * The Stellar standalone / local network passphrase.
+ */
+export const LOCAL_NETWORK_PASSPHRASE = "Standalone Network ; February 2017";
 
 /**
  * Configuration for network connections.
@@ -18,6 +23,7 @@ export type NetworkConfig = {
 };
 
 const DEFAULT_RPC_URLS: Record<AxionveraNetwork, string> = {
+  local: "http://localhost:8000/soroban/rpc",
   testnet: "https://soroban-testnet.stellar.org",
   mainnet: "https://soroban-mainnet.stellar.org",
   futurenet: "https://rpc-futurenet.stellar.org"
@@ -30,6 +36,8 @@ const DEFAULT_RPC_URLS: Record<AxionveraNetwork, string> = {
  */
 export function getNetworkPassphrase(network: AxionveraNetwork): string {
   switch (network) {
+    case "local":
+      return LOCAL_NETWORK_PASSPHRASE;
     case "testnet":
       return Networks.TESTNET;
     case "mainnet":
