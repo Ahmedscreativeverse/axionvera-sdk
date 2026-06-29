@@ -59,6 +59,9 @@ export {
 } from './observability/types';
 export { DiagnosticsManager } from './diagnostics';
 
+// Retry engine (transport-agnostic, pluggable policies + backoff + classification)
+export * from './retry';
+
 // Plugin System
 export { PluginManager, getPluginManager, setPluginManager } from './plugin';
 export type {
