@@ -1,0 +1,18 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig({
+  entry: {
+    index: 'src/index.ts',
+    vault: 'src/contracts/index.ts',
+    client: 'src/client/index.ts',
+    monitoring: 'src/monitoring/index.ts',
+    utils: 'src/utils/index.ts',
+    wallet: 'src/wallet/index.ts',
+    session: 'src/session/index.ts',
+  },
+  format: ['cjs', 'esm'],
+  dts: true,
+  clean: true,
+  splitting: true,
+  external: ['@stellar/stellar-sdk', 'axios', '@axionvera/codegen'],
+});
